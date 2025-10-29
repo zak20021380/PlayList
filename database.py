@@ -1,8 +1,10 @@
 # database.py - Database Management
 # مدیریت دیتابیس
 
+import copy
 import json
 import os
+import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -20,10 +22,23 @@ class Database:
         if os.path.exists(self.db_path):
             try:
                 with open(self.db_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except:
+                    data = json.load(f)
+                    return self._ensure_structure(data)
+            except Exception:
                 return self._create_empty_db()
         return self._create_empty_db()
+
+    def _ensure_structure(self, data: Dict) -> Dict:
+        """Ensure new keys exist in old database files"""
+        if 'premium_plans' not in data:
+            data['premium_plans'] = copy.deepcopy(DEFAULT_PREMIUM_PLANS)
+
+        # Update users with new premium fields if missing
+        for user in data.get('users', {}).values():
+            user.setdefault('premium_plan_id', None)
+            user.setdefault('premium_price', 0)
+
+        return data
 
     def _create_empty_db(self) -> Dict:
         """Create empty database structure"""
@@ -36,7 +51,8 @@ class Database:
                 'total_plays': 0,
                 'total_likes': 0,
                 'total_users': 0,
-            }
+            },
+            'premium_plans': copy.deepcopy(DEFAULT_PREMIUM_PLANS),
         }
 
     def save_data(self):
@@ -63,6 +79,8 @@ class Database:
             'badges': [],
             'premium': False,
             'premium_until': None,
+            'premium_plan_id': None,
+            'premium_price': 0,
             'banned': False,
             'total_plays': 0,
             'total_likes_received': 0,
@@ -101,15 +119,78 @@ class Database:
                 return False
         return True
 
-    def activate_premium(self, user_id: int, days: int = PREMIUM_DURATION_DAYS):
+    def activate_premium(
+        self,
+        user_id: int,
+        days: Optional[int] = None,
+        plan_id: Optional[str] = None,
+        price: Optional[int] = None,
+    ):
         """Activate premium for user"""
+        if days is None:
+            if plan_id:
+                plan = self.get_premium_plan(plan_id)
+                days = plan.get('duration_days') if plan else 30
+            else:
+                days = 30
+
+        if price is None:
+            if plan_id:
+                plan = self.get_premium_plan(plan_id)
+                price = plan.get('price') if plan else 0
+            else:
+                price = 0
+
         expiry = datetime.now() + timedelta(days=days)
         self.update_user(user_id, {
             'premium': True,
-            'premium_until': expiry.isoformat()
+            'premium_until': expiry.isoformat(),
+            'premium_plan_id': plan_id,
+            'premium_price': price,
         })
         # Give premium badge
         self.add_badge(user_id, 'premium')
+
+    # ===== PREMIUM PLANS =====
+
+    def get_premium_plans(self) -> List[Dict]:
+        """Return list of premium plans"""
+        return self.data.get('premium_plans', [])
+
+    def get_premium_plan(self, plan_id: str) -> Optional[Dict]:
+        """Return single premium plan by id"""
+        for plan in self.get_premium_plans():
+            if plan.get('id') == plan_id:
+                return plan
+        return None
+
+    def add_premium_plan(self, title: str, price: int, duration_days: int) -> Dict:
+        """Add new premium plan"""
+        plan = {
+            'id': uuid.uuid4().hex[:8],
+            'title': title,
+            'price': price,
+            'duration_days': duration_days,
+        }
+        self.data.setdefault('premium_plans', []).append(plan)
+        self.save_data()
+        return plan
+
+    def update_premium_plan(self, plan_id: str, **updates):
+        """Update existing premium plan"""
+        plan = self.get_premium_plan(plan_id)
+        if not plan:
+            return
+        plan.update(updates)
+        self.save_data()
+
+    def delete_premium_plan(self, plan_id: str):
+        """Delete premium plan"""
+        plans = self.get_premium_plans()
+        updated = [plan for plan in plans if plan.get('id') != plan_id]
+        if len(updated) != len(plans):
+            self.data['premium_plans'] = updated
+            self.save_data()
 
     def ban_user(self, user_id: int):
         """Ban user"""
@@ -508,6 +589,12 @@ class Database:
         today = datetime.now().date()
         active_today = 0  # This would need activity tracking
 
+        revenue = sum(
+            user.get('premium_price', 0) or 0
+            for user in self.data['users'].values()
+            if user.get('premium')
+        )
+
         return {
             'total_users': total_users,
             'active_today': active_today,
@@ -517,7 +604,7 @@ class Database:
             'total_likes': self.data['stats']['total_likes'],
             'total_plays': self.data['stats']['total_plays'],
             'premium_users': premium_users,
-            'revenue': premium_users * PREMIUM_PRICE,
+            'revenue': revenue,
         }
 
     def get_user_rank(self, user_id: int, sort_by: str = 'likes') -> int:

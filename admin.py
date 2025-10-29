@@ -12,7 +12,17 @@ from utils import *
 from texts import *
 
 # Conversation states for admin
-BROADCAST_MESSAGE, BAN_USER_ID, GIVE_PREMIUM_ID, GIVE_PREMIUM_DAYS, SET_PRICE = range(5)
+(
+    BROADCAST_MESSAGE,
+    BAN_USER_ID,
+    GIVE_PREMIUM_ID,
+    GIVE_PREMIUM_DAYS,
+    ADD_PLAN_TITLE,
+    ADD_PLAN_PRICE,
+    ADD_PLAN_DURATION,
+    EDIT_PLAN_PRICE,
+    EDIT_PLAN_DURATION,
+) = range(9)
 
 
 # ===== ADMIN STATS =====
@@ -173,6 +183,53 @@ async def admin_unban_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ===== PREMIUM MANAGEMENT =====
 
+def build_admin_premium_overview():
+    """Create premium overview text and keyboard"""
+    premium_users = [u for u in db.data['users'].values() if u.get('premium')]
+    revenue = sum(u.get('premium_price', 0) or 0 for u in premium_users)
+    plans = db.get_premium_plans()
+
+    if plans:
+        plan_lines = "\n".join(
+            [
+                f"• {escape_markdown(plan['title'])} — {format_number(plan['price'])} تومان / {plan['duration_days']} روز"
+                for plan in plans
+            ]
+        )
+    else:
+        plan_lines = "پلنی ثبت نشده!"
+
+    message = f"""
+💎 **مدیریت پریمیوم**
+
+📊 کاربران پریمیوم: {len(premium_users)}
+💰 درآمد کل: {format_number(revenue)} تومان
+
+**پلن‌های فعال:**
+{plan_lines}
+
+از دکمه‌های زیر استفاده کن:
+"""
+
+    buttons = [
+        [InlineKeyboardButton("💎 دادن پریمیوم", callback_data="admin_give_premium")],
+        [InlineKeyboardButton("📋 لیست پریمیوم‌ها", callback_data="admin_premium_list")],
+    ]
+
+    for plan in plans:
+        buttons.append([
+            InlineKeyboardButton(
+                f"✏️ مدیریت {plan['title']}",
+                callback_data=f"admin_edit_plan_{plan['id']}"
+            )
+        ])
+
+    buttons.append([InlineKeyboardButton("➕ افزودن پلن جدید", callback_data="admin_add_plan")])
+    buttons.append([InlineKeyboardButton("🔙 برگشت", callback_data="admin_panel")])
+
+    return message, InlineKeyboardMarkup(buttons)
+
+
 async def admin_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Premium management menu"""
     query = update.callback_query
@@ -181,30 +238,12 @@ async def admin_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(query.from_user.id):
         return
 
-    premium_users = [u for u in db.data['users'].values() if u.get('premium')]
-    total_revenue = len(premium_users) * PREMIUM_PRICE
-
-    message = f"""
-💎 **مدیریت پریمیوم**
-
-📊 کاربران پریمیوم: {len(premium_users)}
-💰 درآمد کل: {format_number(total_revenue)} تومان
-💳 قیمت فعلی: {format_number(PREMIUM_PRICE)} تومان
-
-از دکمه‌های زیر استفاده کن:
-"""
-
-    buttons = [
-        [InlineKeyboardButton("💎 دادن پریمیوم", callback_data="admin_give_premium")],
-        [InlineKeyboardButton("📋 لیست پریمیوم‌ها", callback_data="admin_premium_list")],
-        [InlineKeyboardButton("💰 تغییر قیمت", callback_data="admin_set_price")],
-        [InlineKeyboardButton("🔙 برگشت", callback_data="admin_panel")],
-    ]
+    message, markup = build_admin_premium_overview()
 
     await query.edit_message_text(
         message,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(buttons)
+        reply_markup=markup
     )
 
 
@@ -230,9 +269,12 @@ async def admin_give_premium_id(update: Update, context: ContextTypes.DEFAULT_TY
             await update.message.reply_text("کاربر پیدا نشد!")
             return ConversationHandler.END
 
+        default_plan = db.get_premium_plans()[0] if db.get_premium_plans() else None
+        default_days = default_plan['duration_days'] if default_plan else 30
+
         context.user_data['premium_user_id'] = user_id
         await update.message.reply_text(
-            f"برای چند روز؟\n(پیشفرض: {PREMIUM_DURATION_DAYS} روز)"
+            f"برای چند روز؟\n(پیشفرض: {default_days} روز)"
         )
         return GIVE_PREMIUM_DAYS
 
@@ -248,7 +290,7 @@ async def admin_give_premium_days(update: Update, context: ContextTypes.DEFAULT_
         user_id = context.user_data['premium_user_id']
 
         # Activate premium
-        db.activate_premium(user_id, days)
+        db.activate_premium(user_id, days=days, plan_id='manual', price=0)
 
         user = db.get_user(user_id)
         await update.message.reply_text(
@@ -305,44 +347,283 @@ async def admin_premium_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
-async def admin_set_price_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start changing premium price"""
+async def admin_add_plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ask for new plan title"""
     query = update.callback_query
     await query.answer()
 
     if not is_admin(query.from_user.id):
         return ConversationHandler.END
 
-    await query.edit_message_text(
-        f"قیمت فعلی: {format_number(PREMIUM_PRICE)} تومان\n\n"
-        f"قیمت جدید رو بفرست:"
-    )
-    return SET_PRICE
+    await query.edit_message_text("اسم پلن جدید رو بفرست:")
+    return ADD_PLAN_TITLE
 
 
-async def admin_set_price_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive new premium price"""
+async def admin_add_plan_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receive plan title"""
+    title = update.message.text.strip()
+
+    if len(title) < 2:
+        await update.message.reply_text("اسم پلن خیلی کوتاهه! دوباره بفرست:")
+        return ADD_PLAN_TITLE
+
+    context.user_data['new_plan_title'] = title
+    await update.message.reply_text("قیمت پلن (تومان) رو بفرست:")
+    return ADD_PLAN_PRICE
+
+
+async def admin_add_plan_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receive plan price"""
     try:
-        new_price = int(update.message.text)
-
-        if new_price < 1000:
-            await update.message.reply_text("قیمت باید حداقل 1000 تومان باشه!")
-            return SET_PRICE
-
-        # Update price in config (need to modify config dynamically or save to db)
-        # For now, just inform admin to update config.py manually
-        await update.message.reply_text(
-            f"✅ برای تغییر قیمت به {format_number(new_price)} تومان:\n\n"
-            f"1. فایل config.py رو باز کن\n"
-            f"2. PREMIUM_PRICE رو به {new_price} تغییر بده\n"
-            f"3. ربات رو ریستارت کن"
-        )
-
+        price = int(update.message.text.replace(',', '').strip())
     except ValueError:
-        await update.message.reply_text("عدد وارد کن!")
-        return SET_PRICE
+        await update.message.reply_text("قیمت باید عدد باشه! دوباره بفرست:")
+        return ADD_PLAN_PRICE
+
+    if price < 1000:
+        await update.message.reply_text("قیمت باید حداقل 1000 تومان باشه!")
+        return ADD_PLAN_PRICE
+
+    context.user_data['new_plan_price'] = price
+    await update.message.reply_text("مدت پلن چند روزه باشه؟")
+    return ADD_PLAN_DURATION
+
+
+async def admin_add_plan_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receive plan duration and save"""
+    try:
+        days = int(update.message.text.strip())
+    except ValueError:
+        await update.message.reply_text("مدت باید عدد باشه! دوباره بفرست:")
+        return ADD_PLAN_DURATION
+
+    if days <= 0:
+        await update.message.reply_text("مدت باید بزرگتر از صفر باشه!")
+        return ADD_PLAN_DURATION
+
+    title = context.user_data.pop('new_plan_title', 'پلن جدید')
+    price = context.user_data.pop('new_plan_price', 0)
+    plan = db.add_premium_plan(title=title, price=price, duration_days=days)
+
+    await update.message.reply_text(ADMIN_PLAN_CREATED.format(title=plan['title']))
+
+    overview_text, markup = build_admin_premium_overview()
+    await update.message.reply_text(
+        overview_text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=markup
+    )
 
     return ConversationHandler.END
+
+
+async def admin_edit_plan_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show specific plan management menu"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    plan_id = query.data.replace('admin_edit_plan_', '')
+    plan = db.get_premium_plan(plan_id)
+
+    if not plan:
+        await query.edit_message_text("پلن پیدا نشد!")
+        return
+
+    message = (
+        f"💎 **{escape_markdown(plan['title'])}**\n\n"
+        f"💰 قیمت: {format_number(plan['price'])} تومان\n"
+        f"⏱ مدت: {plan['duration_days']} روز"
+    )
+
+    buttons = [
+        [InlineKeyboardButton("💰 تغییر قیمت", callback_data=f"admin_plan_price_{plan_id}")],
+        [InlineKeyboardButton("⏱ تغییر مدت", callback_data=f"admin_plan_duration_{plan_id}")],
+    ]
+
+    if len(db.get_premium_plans()) > 1:
+        buttons.append([
+            InlineKeyboardButton("🗑 حذف پلن", callback_data=f"admin_plan_delete_{plan_id}")
+        ])
+
+    buttons.append([InlineKeyboardButton("🔙 برگشت", callback_data="admin_premium")])
+
+    await query.edit_message_text(
+        message,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def admin_plan_price_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Prompt for new price"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
+
+    plan_id = query.data.replace('admin_plan_price_', '')
+    plan = db.get_premium_plan(plan_id)
+
+    if not plan:
+        await query.edit_message_text("پلن پیدا نشد!")
+        return ConversationHandler.END
+
+    context.user_data['edit_plan_id'] = plan_id
+
+    await query.edit_message_text(
+        f"قیمت فعلی {plan['title']}: {format_number(plan['price'])} تومان\n\n"
+        "قیمت جدید رو بفرست:"
+    )
+    return EDIT_PLAN_PRICE
+
+
+async def admin_plan_price_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Save new plan price"""
+    plan_id = context.user_data.get('edit_plan_id')
+
+    if not plan_id:
+        await update.message.reply_text("پلن مشخص نیست! دوباره تلاش کن.")
+        return ConversationHandler.END
+
+    try:
+        price = int(update.message.text.replace(',', '').strip())
+    except ValueError:
+        await update.message.reply_text("قیمت باید عدد باشه! دوباره بفرست:")
+        return EDIT_PLAN_PRICE
+
+    if price < 1000:
+        await update.message.reply_text("قیمت باید حداقل 1000 تومان باشه!")
+        return EDIT_PLAN_PRICE
+
+    db.update_premium_plan(plan_id, price=price)
+    plan = db.get_premium_plan(plan_id)
+
+    await update.message.reply_text(ADMIN_PLAN_UPDATED.format(title=plan['title']))
+
+    overview_text, markup = build_admin_premium_overview()
+    await update.message.reply_text(
+        overview_text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=markup
+    )
+
+    context.user_data.pop('edit_plan_id', None)
+    return ConversationHandler.END
+
+
+async def admin_plan_duration_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Prompt for new duration"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
+
+    plan_id = query.data.replace('admin_plan_duration_', '')
+    plan = db.get_premium_plan(plan_id)
+
+    if not plan:
+        await query.edit_message_text("پلن پیدا نشد!")
+        return ConversationHandler.END
+
+    context.user_data['edit_plan_id'] = plan_id
+
+    await query.edit_message_text(
+        f"مدت فعلی {plan['title']}: {plan['duration_days']} روز\n\n"
+        "مدت جدید (به روز) رو بفرست:"
+    )
+    return EDIT_PLAN_DURATION
+
+
+async def admin_plan_duration_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Save new plan duration"""
+    plan_id = context.user_data.get('edit_plan_id')
+
+    if not plan_id:
+        await update.message.reply_text("پلن مشخص نیست! دوباره تلاش کن.")
+        return ConversationHandler.END
+
+    try:
+        days = int(update.message.text.strip())
+    except ValueError:
+        await update.message.reply_text("مدت باید عدد باشه! دوباره بفرست:")
+        return EDIT_PLAN_DURATION
+
+    if days <= 0:
+        await update.message.reply_text("مدت باید بزرگتر از صفر باشه!")
+        return EDIT_PLAN_DURATION
+
+    db.update_premium_plan(plan_id, duration_days=days)
+    plan = db.get_premium_plan(plan_id)
+
+    await update.message.reply_text(ADMIN_PLAN_UPDATED.format(title=plan['title']))
+
+    overview_text, markup = build_admin_premium_overview()
+    await update.message.reply_text(
+        overview_text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=markup
+    )
+
+    context.user_data.pop('edit_plan_id', None)
+    return ConversationHandler.END
+
+
+async def admin_plan_delete_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ask for delete confirmation"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    plan_id = query.data.replace('admin_plan_delete_', '')
+    plan = db.get_premium_plan(plan_id)
+
+    if not plan:
+        await query.edit_message_text("پلن پیدا نشد!")
+        return
+
+    buttons = [
+        [InlineKeyboardButton("✅ بله حذف کن", callback_data=f"admin_plan_delete_confirm_{plan_id}")],
+        [InlineKeyboardButton("❌ انصراف", callback_data=f"admin_edit_plan_{plan_id}")],
+    ]
+
+    await query.edit_message_text(
+        f"آیا از حذف پلن {plan['title']} مطمئنی؟",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def admin_plan_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Delete plan after confirmation"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    plan_id = query.data.replace('admin_plan_delete_confirm_', '')
+    plan = db.get_premium_plan(plan_id)
+
+    if not plan:
+        await query.edit_message_text("پلن پیدا نشد!")
+        return
+
+    db.delete_premium_plan(plan_id)
+
+    await query.answer(ADMIN_PLAN_DELETED.format(title=plan['title']))
+
+    message, markup = build_admin_premium_overview()
+    await query.edit_message_text(
+        message,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=markup
+    )
 
 
 # ===== BROADCAST =====
@@ -518,8 +799,17 @@ __all__ = [
     'admin_give_premium_id',
     'admin_give_premium_days',
     'admin_premium_list',
-    'admin_set_price_start',
-    'admin_set_price_value',
+    'admin_add_plan_start',
+    'admin_add_plan_title',
+    'admin_add_plan_price',
+    'admin_add_plan_duration',
+    'admin_edit_plan_menu',
+    'admin_plan_price_start',
+    'admin_plan_price_value',
+    'admin_plan_duration_start',
+    'admin_plan_duration_value',
+    'admin_plan_delete_start',
+    'admin_plan_delete_confirm',
     'admin_broadcast_start',
     'admin_broadcast_type',
     'admin_broadcast_send',

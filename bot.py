@@ -19,6 +19,31 @@ from config import *
 from database import db
 from utils import *
 from texts import *
+from admin import (
+    GIVE_PREMIUM_ID,
+    GIVE_PREMIUM_DAYS,
+    ADD_PLAN_TITLE,
+    ADD_PLAN_PRICE,
+    ADD_PLAN_DURATION,
+    EDIT_PLAN_PRICE,
+    EDIT_PLAN_DURATION,
+    admin_premium,
+    admin_premium_list,
+    admin_give_premium_start,
+    admin_give_premium_id,
+    admin_give_premium_days,
+    admin_add_plan_start,
+    admin_add_plan_title,
+    admin_add_plan_price,
+    admin_add_plan_duration,
+    admin_edit_plan_menu,
+    admin_plan_price_start,
+    admin_plan_price_value,
+    admin_plan_duration_start,
+    admin_plan_duration_value,
+    admin_plan_delete_start,
+    admin_plan_delete_confirm,
+)
 
 # Logging
 logging.basicConfig(
@@ -578,11 +603,29 @@ async def premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Show premium info
-    info_text = PREMIUM_INFO.format(price=format_number(PREMIUM_PRICE))
+    plans = db.get_premium_plans()
+
+    if plans:
+        plan_lines = "\n".join(
+            [
+                f"• {escape_markdown(plan['title'])}: {format_number(plan['price'])} تومان / {plan['duration_days']} روز"
+                for plan in plans
+            ]
+        )
+    else:
+        plan_lines = "به زودی پلن‌های جدید اضافه میشه!"
+
+    info_text = PREMIUM_INFO.format(plans=plan_lines)
 
     buttons = [
-        [InlineKeyboardButton("💳 خرید پریمیوم", callback_data="buy_premium")],
-    ]
+        [
+            InlineKeyboardButton(
+                f"{plan['title']} — {format_number(plan['price'])} تومان",
+                callback_data=f"buy_plan_{plan['id']}"
+            )
+        ]
+        for plan in plans
+    ] or [[InlineKeyboardButton("🔙 برگشت", callback_data="back_main")]]
 
     await update.message.reply_text(
         info_text,
@@ -859,19 +902,52 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Buy premium
     elif data == 'buy_premium':
-        # Create ZarinPal payment
+        plans = db.get_premium_plans()
+
+        if not plans:
+            await query.edit_message_text("فعلاً هیچ پلنی تعریف نشده!")
+            return
+
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    f"{plan['title']} — {format_number(plan['price'])} تومان",
+                    callback_data=f"buy_plan_{plan['id']}"
+                )
+            ]
+            for plan in plans
+        ]
+
+        await query.edit_message_text(
+            "یکی از پلن‌های زیر رو انتخاب کن:",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+
+    elif data.startswith('buy_plan_'):
+        plan_id = data.replace('buy_plan_', '')
+        plan = db.get_premium_plan(plan_id)
+
+        if not plan:
+            await query.answer("پلن پیدا نشد!")
+            return
+
         payment_url = zarinpal.create_payment(
-            amount=PREMIUM_PRICE,
-            description=f"خرید پریمیوم پلی‌لیست - {user_id}",
+            amount=plan['price'],
+            description=f"خرید {plan['title']} پلی‌لیست - {user_id}",
             user_id=user_id
         )
 
         if payment_url:
             buttons = [
                 [InlineKeyboardButton("💳 پرداخت", url=payment_url)],
+                [InlineKeyboardButton("🔙 پلن‌های دیگر", callback_data="buy_premium")],
             ]
             await query.edit_message_text(
-                PREMIUM_PAYMENT_INSTRUCTIONS.format(price=format_number(PREMIUM_PRICE)),
+                PREMIUM_PAYMENT_INSTRUCTIONS.format(
+                    title=plan['title'],
+                    price=plan['price'],
+                    days=plan['duration_days'],
+                ),
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup(buttons)
             )
@@ -1028,6 +1104,34 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)],
     )
     application.add_handler(conv_handler)
+
+    # Admin premium conversations
+    admin_conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(admin_give_premium_start, pattern='^admin_give_premium$'),
+            CallbackQueryHandler(admin_add_plan_start, pattern='^admin_add_plan$'),
+            CallbackQueryHandler(admin_plan_price_start, pattern='^admin_plan_price_'),
+            CallbackQueryHandler(admin_plan_duration_start, pattern='^admin_plan_duration_'),
+        ],
+        states={
+            GIVE_PREMIUM_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_give_premium_id)],
+            GIVE_PREMIUM_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_give_premium_days)],
+            ADD_PLAN_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_plan_title)],
+            ADD_PLAN_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_plan_price)],
+            ADD_PLAN_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_plan_duration)],
+            EDIT_PLAN_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_plan_price_value)],
+            EDIT_PLAN_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_plan_duration_value)],
+        },
+        fallbacks=[CallbackQueryHandler(admin_premium, pattern='^admin_premium$')],
+    )
+    application.add_handler(admin_conv_handler)
+
+    # Admin premium callbacks
+    application.add_handler(CallbackQueryHandler(admin_premium, pattern='^admin_premium$'))
+    application.add_handler(CallbackQueryHandler(admin_premium_list, pattern='^admin_premium_list$'))
+    application.add_handler(CallbackQueryHandler(admin_edit_plan_menu, pattern='^admin_edit_plan_'))
+    application.add_handler(CallbackQueryHandler(admin_plan_delete_start, pattern='^admin_plan_delete_.+$'))
+    application.add_handler(CallbackQueryHandler(admin_plan_delete_confirm, pattern='^admin_plan_delete_confirm_.+$'))
 
     # Audio handler
     application.add_handler(MessageHandler(filters.AUDIO, handle_audio))
