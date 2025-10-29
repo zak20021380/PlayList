@@ -410,6 +410,30 @@ class Database:
         playlists.sort(key=lambda x: len(x.get('likes', [])), reverse=True)
         return playlists[:limit]
 
+    def get_new_playlists(self, limit=20) -> List[Dict]:
+        """Get newest playlists"""
+        playlists = self.get_all_playlists()
+
+        def _created_at(playlist):
+            created = playlist.get('created_at')
+            try:
+                return datetime.fromisoformat(created)
+            except Exception:
+                return datetime.min
+
+        playlists.sort(key=_created_at, reverse=True)
+        return playlists[:limit]
+
+    def get_playlists_by_mood(self, mood: str, limit=20) -> List[Dict]:
+        """Get playlists filtered by mood"""
+        playlists = [
+            playlist
+            for playlist in self.get_all_playlists()
+            if playlist.get('mood') == mood
+        ]
+        playlists.sort(key=lambda x: len(x.get('likes', [])), reverse=True)
+        return playlists[:limit]
+
     def search_playlists(self, query: str) -> List[Dict]:
         """Search playlists by name"""
         query = query.lower()

@@ -44,6 +44,30 @@ def get_main_keyboard():
     return keyboard
 
 
+async def send_response(
+    update: Update,
+    text: str,
+    *,
+    reply_markup=None,
+    parse_mode: str = ParseMode.MARKDOWN,
+):
+    """Send a message or edit existing one based on update type"""
+    message = update.effective_message
+
+    if update.callback_query:
+        await message.edit_text(
+            text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        )
+    else:
+        await message.reply_text(
+            text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        )
+
+
 async def send_notification(user_id: int, message: str, context: ContextTypes.DEFAULT_TYPE):
     """Send notification to user"""
     if should_send_notification(user_id, db):
@@ -163,7 +187,7 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
     playlists = db.get_user_playlists(user_id)
 
     if not playlists:
-        await update.message.reply_text(NO_PLAYLISTS)
+        await send_response(update, NO_PLAYLISTS, parse_mode=None)
         return
 
     message = "🎵 **پلی‌لیست‌های من:**\n\n"
@@ -173,8 +197,9 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mood = DEFAULT_MOODS.get(pl['mood'], '🎵')
         songs_count = len(pl['songs'])
         likes_count = len(pl.get('likes', []))
+        name = escape_markdown(pl['name'])
 
-        message += f"{mood} **{pl['name']}**\n"
+        message += f"{mood} **{name}**\n"
         message += f"   🎧 {songs_count} آهنگ | ❤️ {likes_count} لایک\n\n"
 
         buttons.append([
@@ -188,10 +213,10 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         ])
 
-    await update.message.reply_text(
+    await send_response(
+        update,
         message,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(buttons)
+        reply_markup=InlineKeyboardMarkup(buttons),
     )
 
 
@@ -215,9 +240,11 @@ async def browse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for i in range(0, len(mood_buttons), 2):
         keyboard.append(mood_buttons[i:i + 2])
 
-    await update.message.reply_text(
+    await send_response(
+        update,
         BROWSE_MENU,
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN,
     )
 
 
@@ -226,7 +253,11 @@ async def trending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     playlists = db.get_trending_playlists(limit=20)
 
     if not playlists:
-        await update.message.reply_text("هنوز پلی‌لیست ترندی نیست! اولین نفر باش! 🚀")
+        await send_response(
+            update,
+            "هنوز پلی‌لیست ترندی نیست! اولین نفر باش! 🚀",
+            parse_mode=None,
+        )
         return
 
     message = TRENDING_HEADER
@@ -234,7 +265,9 @@ async def trending(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for i, pl in enumerate(playlists[:10], 1):
         rank_emoji = get_rank_emoji(i)
-        message += f"{rank_emoji} **{pl['name']}** by {pl['owner_name']}\n"
+        name = escape_markdown(pl['name'])
+        owner = escape_markdown(pl['owner_name'])
+        message += f"{rank_emoji} **{name}** by {owner}\n"
         message += f"   ▶️ {pl.get('plays', 0)} | ❤️ {len(pl.get('likes', []))}\n\n"
 
         buttons.append([
@@ -244,8 +277,196 @@ async def trending(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         ])
 
-    await update.message.reply_text(
+    buttons.append([
+        InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")
+    ])
+
+    await send_response(
+        update,
         message,
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def new_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show newest playlists"""
+    playlists = db.get_new_playlists(limit=20)
+
+    if not playlists:
+        await send_response(
+            update,
+            "فعلاً پلی‌لیست تازه‌ای ساخته نشده! 🎧",
+            parse_mode=None,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")]
+            ]),
+        )
+        return
+
+    message = NEW_PLAYLISTS_HEADER
+    buttons = []
+
+    for pl in playlists[:10]:
+        mood = DEFAULT_MOODS.get(pl.get('mood'), '🎵')
+        name = escape_markdown(pl['name'])
+        owner = escape_markdown(pl['owner_name'])
+        created = format_date(pl.get('created_at', ''))
+        message += f"{mood} **{name}** by {owner}\n"
+        message += (
+            f"   ❤️ {len(pl.get('likes', []))} | ▶️ {pl.get('plays', 0)} | 📅 {created}\n\n"
+        )
+
+        buttons.append([
+            InlineKeyboardButton(
+                f"▶️ {pl['name']}",
+                callback_data=f"play_{pl['id']}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")
+    ])
+
+    await send_response(
+        update,
+        message,
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def top_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show top playlists by likes"""
+    playlists = db.get_top_playlists(limit=20)
+
+    if not playlists:
+        await send_response(
+            update,
+            "هنوز پلی‌لیست محبوبی وجود نداره!",
+            parse_mode=None,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")]
+            ]),
+        )
+        return
+
+    message = TOP_PLAYLISTS_HEADER
+    buttons = []
+
+    for i, pl in enumerate(playlists[:10], 1):
+        medal = get_rank_emoji(i)
+        name = escape_markdown(pl['name'])
+        owner = escape_markdown(pl['owner_name'])
+        likes = len(pl.get('likes', []))
+        plays = pl.get('plays', 0)
+        message += f"{medal} **{name}** by {owner}\n"
+        message += f"   ❤️ {likes} | ▶️ {plays}\n\n"
+
+        buttons.append([
+            InlineKeyboardButton(
+                f"{medal} {pl['name']}",
+                callback_data=f"play_{pl['id']}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")
+    ])
+
+    await send_response(
+        update,
+        message,
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def mood_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE, mood_key: str):
+    """Show playlists filtered by mood"""
+    playlists = db.get_playlists_by_mood(mood_key, limit=20)
+    mood_name = DEFAULT_MOODS.get(mood_key, mood_key)
+
+    if not playlists:
+        await send_response(
+            update,
+            f"برای حال‌وهوای {mood_name} هنوز پلی‌لیستی نداریم!",
+            parse_mode=None,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")]
+            ]),
+        )
+        return
+
+    message = f"{mood_name} **پلی‌لیست‌های این حال‌وهوا:**\n\n"
+    buttons = []
+
+    for pl in playlists[:10]:
+        name = escape_markdown(pl['name'])
+        owner = escape_markdown(pl['owner_name'])
+        likes = len(pl.get('likes', []))
+        plays = pl.get('plays', 0)
+        message += f"{mood_name} **{name}** by {owner}\n"
+        message += f"   ❤️ {likes} | ▶️ {plays}\n\n"
+
+        buttons.append([
+            InlineKeyboardButton(
+                f"▶️ {pl['name']}",
+                callback_data=f"play_{pl['id']}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")
+    ])
+
+    await send_response(
+        update,
+        message,
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
+    """Send playlist search results"""
+    playlists = db.search_playlists(query)
+
+    if not playlists:
+        await update.message.reply_text(
+            SEARCH_NO_RESULTS,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔁 جستجوی دوباره", callback_data="browse_search")],
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")],
+            ])
+        )
+        return
+
+    text = f"🔍 **نتایج برای:** {escape_markdown(query)}\n\n"
+    buttons = []
+
+    for pl in playlists[:10]:
+        mood = DEFAULT_MOODS.get(pl.get('mood'), '🎵')
+        name = escape_markdown(pl['name'])
+        owner = escape_markdown(pl['owner_name'])
+        likes = len(pl.get('likes', []))
+        plays = pl.get('plays', 0)
+
+        text += f"{mood} **{name}** by {owner}\n"
+        text += f"   ❤️ {likes} | ▶️ {plays}\n\n"
+
+        buttons.append([
+            InlineKeyboardButton(
+                f"▶️ {pl['name']}",
+                callback_data=f"play_{pl['id']}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton("🔁 جستجوی دوباره", callback_data="browse_search")
+    ])
+    buttons.append([
+        InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")
+    ])
+
+    await update.message.reply_text(
+        text,
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(buttons)
     )
@@ -431,8 +652,37 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = update.effective_user.id
 
+    # Browse menus
+    if data == 'browse_menu':
+        context.user_data.pop('awaiting_search', None)
+        await browse(update, context)
+
+    elif data == 'browse_trending':
+        await trending(update, context)
+
+    elif data == 'browse_new':
+        await new_playlists(update, context)
+
+    elif data == 'browse_top':
+        await top_playlists(update, context)
+
+    elif data.startswith('browse_mood_'):
+        mood_key = data.replace('browse_mood_', '')
+        await mood_playlists(update, context, mood_key)
+
+    elif data == 'browse_search':
+        context.user_data['awaiting_search'] = True
+        await send_response(
+            update,
+            SEARCH_PROMPT,
+            parse_mode=None,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")]
+            ]),
+        )
+
     # Like playlist
-    if data.startswith('like_'):
+    elif data.startswith('like_'):
         playlist_id = data.replace('like_', '')
         playlist = db.get_playlist(playlist_id)
 
@@ -517,6 +767,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await asyncio.sleep(0.5)
                 except Exception as e:
                     logger.error(f"Failed to send audio: {e}")
+
+    # User quick actions
+    elif data == 'my_playlists':
+        await my_playlists(update, context)
+
+    elif data == 'premium':
+        await premium_info(update, context)
 
     # Delete playlist
     elif data.startswith('delete_'):
@@ -645,6 +902,17 @@ async def admin_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle main menu button presses"""
     text = update.message.text
+
+    if context.user_data.get('awaiting_search'):
+        query = text.strip()
+
+        if not query:
+            await update.message.reply_text("لطفاً متن جستجو رو بنویس!", parse_mode=None)
+            return
+
+        context.user_data.pop('awaiting_search', None)
+        await show_search_results(update, context, query)
+        return
 
     if text == BTN_MY_PLAYLISTS or "پلی‌لیست‌های من" in text:
         await my_playlists(update, context)
