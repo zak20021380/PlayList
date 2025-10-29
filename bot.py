@@ -145,7 +145,7 @@ async def new_playlist_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     is_premium = db.is_premium(user_id)
     limit = PREMIUM_PLAYLIST_LIMIT if is_premium else FREE_PLAYLIST_LIMIT
 
-    if len(user['playlists']) >= limit:
+    if limit and limit > 0 and len(user['playlists']) >= limit:
         await update.message.reply_text(
             PLAYLIST_LIMIT_REACHED.format(limit=limit),
             parse_mode=ParseMode.MARKDOWN
@@ -190,8 +190,33 @@ async def new_playlist_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if playlist_id:
+        playlist = db.get_playlist(playlist_id)
+        is_premium = db.is_premium(update.effective_user.id)
+        playlist_name_md = escape_markdown(playlist_name)
+        base_message = PLAYLIST_CREATED.format(name=playlist_name_md)
+
+        if playlist:
+            max_songs = playlist.get('max_songs', FREE_SONGS_PER_PLAYLIST)
+        else:
+            max_songs = FREE_SONGS_PER_PLAYLIST
+
+        if is_premium:
+            message = (
+                base_message
+                + "\n\n"
+                + "فقط فایل صوتی بفرست و تو کپشن اسم پلی‌لیست رو بنویس."
+                + f"\nبا {MIN_SONGS_TO_PUBLISH} آهنگ منتشر میشه و بعدش هرچقدر خواستی آهنگ اضافه کن!"
+            )
+        else:
+            message = (
+                f"{base_message}\n"
+                + PLAYLIST_CREATED_FREE.format(max_songs=max_songs)
+                + "\n\nفقط فایل صوتی بفرست و تو کپشن اسم پلی‌لیست رو بنویس."
+                + f"\nبعد از {MIN_SONGS_TO_PUBLISH} آهنگ منتشر میشه و ظرفیتش تکمیل میشه."
+            )
+
         await query.edit_message_text(
-            PLAYLIST_CREATED.format(name=playlist_name),
+            message,
             parse_mode=ParseMode.MARKDOWN
         )
     else:
@@ -217,15 +242,35 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     message = "🎵 **پلی‌لیست‌های من:**\n\n"
     buttons = []
+    is_premium = db.is_premium(user_id)
 
     for pl in playlists:
         mood = DEFAULT_MOODS.get(pl['mood'], '🎵')
-        songs_count = len(pl['songs'])
+        songs_count = len(pl.get('songs', []))
         likes_count = len(pl.get('likes', []))
         name = escape_markdown(pl['name'])
+        status = pl.get('status', 'published')
+        status_icon = '✅' if status == 'published' else '📝'
+        max_songs = pl.get('max_songs', 0) or 0
 
-        message += f"{mood} **{name}**\n"
-        message += f"   🎧 {songs_count} آهنگ | ❤️ {likes_count} لایک\n\n"
+        if max_songs and max_songs < PREMIUM_SONGS_PER_PLAYLIST:
+            count_display = f"{songs_count}/{max_songs}"
+        elif max_songs and max_songs >= PREMIUM_SONGS_PER_PLAYLIST:
+            count_display = f"{songs_count}/∞"
+        elif is_premium:
+            count_display = f"{songs_count}/∞"
+        else:
+            count_display = str(songs_count)
+
+        message += f"{status_icon} {mood} **{name}**\n"
+        message += f"   🎧 {count_display} | ❤️ {likes_count} لایک\n"
+
+        if status != 'published':
+            remaining = max(MIN_SONGS_TO_PUBLISH - songs_count, 0)
+            if remaining > 0:
+                message += f"   ⏳ هنوز {remaining} آهنگ دیگه لازمه تا منتشر بشه\n"
+
+        message += "\n"
 
         buttons.append([
             InlineKeyboardButton(
@@ -671,18 +716,6 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Check upload limit
-    user = db.get_user(user_id)
-    is_premium = db.is_premium(user_id)
-    limit = PREMIUM_UPLOAD_LIMIT if is_premium else FREE_UPLOAD_LIMIT
-
-    if user['total_songs_uploaded'] >= limit:
-        await update.message.reply_text(
-            UPLOAD_LIMIT_REACHED.format(limit=limit),
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
-
     # Get audio info
     audio = update.message.audio
     song_data = {
@@ -693,14 +726,51 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'file_size': audio.file_size or 0,
     }
 
-    # Add to playlist
-    if db.add_song_to_playlist(playlist['id'], song_data):
+    max_songs = playlist.get('max_songs', 0) or 0
+    current_count = len(playlist.get('songs', []))
+
+    if max_songs and current_count >= max_songs:
         await update.message.reply_text(
-            UPLOAD_SUCCESS.format(playlist=playlist['name']),
-            parse_mode=ParseMode.MARKDOWN
+            PLAYLIST_FULL.format(max_songs=max_songs),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    success, status = db.add_song_to_playlist(playlist['id'], song_data)
+
+    if not success:
+        if status == 'playlist_full':
+            await update.message.reply_text(
+                PLAYLIST_FULL.format(max_songs=playlist.get('max_songs', 0)),
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        else:
+            await update.message.reply_text(ERROR_GENERAL)
+        return
+
+    updated_playlist = db.get_playlist(playlist['id'])
+    updated_count = len(updated_playlist.get('songs', []))
+
+    if status == 'playlist_published':
+        await update.message.reply_text(
+            PLAYLIST_PUBLISHED,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    elif status == 'draft_progress':
+        remaining = max(MIN_SONGS_TO_PUBLISH - updated_count, 0)
+        await update.message.reply_text(
+            PLAYLIST_DRAFT_PROGRESS.format(
+                current=updated_count,
+                minimum=MIN_SONGS_TO_PUBLISH,
+                remaining=remaining,
+            ),
+            parse_mode=ParseMode.MARKDOWN,
         )
     else:
-        await update.message.reply_text(ERROR_GENERAL)
+        await update.message.reply_text(
+            UPLOAD_SUCCESS.format(playlist=updated_playlist['name']),
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
 
 # ===== CALLBACK HANDLERS =====
@@ -754,6 +824,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(ERROR_NOT_FOUND)
             return
 
+        if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
+            await query.answer("این پلی‌لیست هنوز منتشر نشده!")
+            return
+
         # Check if already liked
         if str(user_id) in playlist.get('likes', []):
             # Unlike
@@ -779,6 +853,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Add to playlist
     elif data.startswith('add_'):
         playlist_id = data.replace('add_', '')
+        playlist = db.get_playlist(playlist_id)
+
+        if not playlist or (playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id)):
+            await query.answer("این پلی‌لیست هنوز منتشر نشده!")
+            return
+
         context.user_data['adding_from'] = playlist_id
 
         # Show user's playlists
@@ -806,7 +886,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         playlist_id = data.replace('play_', '')
         playlist = db.get_playlist(playlist_id)
 
-        if not playlist or not playlist['songs']:
+        if not playlist:
+            await query.answer("این پلی‌لیست پیدا نشد!")
+            return
+
+        if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
+            await query.answer("این پلی‌لیست هنوز منتشر نشده!")
+            return
+
+        if not playlist['songs']:
             await query.answer("این پلی‌لیست خالیه!")
             return
 
