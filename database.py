@@ -6,7 +6,7 @@ import json
 import os
 import uuid
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from config import *
 from utils import calculate_score
@@ -37,6 +37,11 @@ class Database:
         for user in data.get('users', {}).values():
             user.setdefault('premium_plan_id', None)
             user.setdefault('premium_price', 0)
+
+        # Update playlists with new fields
+        for playlist in data.get('playlists', {}).values():
+            playlist.setdefault('status', 'published')
+            playlist.setdefault('max_songs', 0)
 
         return data
 
@@ -216,11 +221,15 @@ class Database:
         # Check limit
         is_prem = self.is_premium(user_id)
         limit = PREMIUM_PLAYLIST_LIMIT if is_prem else FREE_PLAYLIST_LIMIT
-        if len(user['playlists']) >= limit:
+        if limit and limit > 0 and len(user['playlists']) >= limit:
             return None
 
         # Generate playlist ID
         playlist_id = f"pl_{user_id}_{len(self.data['playlists'])}"
+
+        max_songs = (
+            PREMIUM_SONGS_PER_PLAYLIST if is_prem else FREE_SONGS_PER_PLAYLIST
+        )
 
         playlist = {
             'id': playlist_id,
@@ -233,6 +242,8 @@ class Database:
             'plays': 0,
             'created_at': datetime.now().isoformat(),
             'is_private': False,
+            'status': 'draft',
+            'max_songs': max_songs,
         }
 
         self.data['playlists'][playlist_id] = playlist
@@ -265,13 +276,31 @@ class Database:
         user = self.get_user(user_id)
         if not user:
             return []
-        return [self.get_playlist(pl_id) for pl_id in user['playlists'] if self.get_playlist(pl_id)]
+        drafts = []
+        published = []
+        for pl_id in user['playlists']:
+            playlist = self.get_playlist(pl_id)
+            if not playlist:
+                continue
+            if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
+                continue
+            if playlist.get('status') == 'published':
+                published.append(playlist)
+            else:
+                drafts.append(playlist)
 
-    def add_song_to_playlist(self, playlist_id: str, song_data: Dict) -> bool:
+        return drafts + published
+
+    def add_song_to_playlist(self, playlist_id: str, song_data: Dict) -> Tuple[bool, str]:
         """Add song to playlist"""
         playlist = self.get_playlist(playlist_id)
         if not playlist:
-            return False
+            return False, 'playlist_not_found'
+
+        max_songs = playlist.get('max_songs', 0) or 0
+        current_count = len(playlist.get('songs', []))
+        if max_songs and current_count >= max_songs:
+            return False, 'playlist_full'
 
         # Generate song ID
         song_id = f"song_{len(self.data['songs'])}"
@@ -292,8 +321,18 @@ class Database:
             if user['total_songs_uploaded'] >= 100:
                 self.add_badge(owner_id, 'music_lover')
 
+        # Auto-publish if minimum songs reached
+        current_count += 1
+        message_key = 'song_added'
+        if playlist.get('status') != 'published':
+            if current_count >= MIN_SONGS_TO_PUBLISH:
+                playlist['status'] = 'published'
+                message_key = 'playlist_published'
+            else:
+                message_key = 'draft_progress'
+
         self.save_data()
-        return True
+        return True, message_key
 
     # ===== LIKES & INTERACTIONS =====
 
@@ -521,6 +560,8 @@ class Database:
         for pl_id, playlist in self.data['playlists'].items():
             if filter_private and playlist.get('is_private'):
                 continue
+            if playlist.get('status') != 'published':
+                continue
             playlists.append(playlist)
         return playlists
 
@@ -580,7 +621,13 @@ class Database:
 
     def get_global_stats(self) -> Dict:
         """Get global statistics"""
-        total_playlists = len(self.data['playlists'])
+        total_playlists = len(
+            [
+                pl
+                for pl in self.data['playlists'].values()
+                if pl.get('status') == 'published'
+            ]
+        )
         total_songs = len(self.data['songs'])
         total_users = len([u for u in self.data['users'].values() if not u.get('banned')])
         premium_users = len([u for u in self.data['users'].values() if u.get('premium')])
