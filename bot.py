@@ -519,26 +519,47 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show leaderboard"""
-    top_users = db.get_leaderboard(sort_by='likes', limit=20)
     user_id = update.effective_user.id
-    user_rank = db.get_user_rank(user_id)
+    leaderboard_entries = db.get_leaderboard(sort_by='likes', limit=0)
+    top_users = leaderboard_entries[:20]
+    total_users = len(leaderboard_entries)
+
+    user_entry = None
+    user_rank = 0
+    user_id_str = str(user_id)
+
+    for index, entry in enumerate(leaderboard_entries, 1):
+        if entry['user_id'] == user_id_str:
+            user_entry = entry
+            user_rank = index
+            break
 
     message = LEADERBOARD_HEADER.format(period="این هفته")
 
     for i, user in enumerate(top_users, 1):
         rank_emoji = get_rank_emoji(i)
-        premium_badge = "💎" if user['is_premium'] else ""
+        premium_badge = " 💎" if user['is_premium'] else ""
 
         message += LEADERBOARD_ITEM.format(
             rank=rank_emoji,
-            name=user['name'],
-            score=user['score'],
-            unit="لایک"
+            name=escape_markdown(user['name']),
+            premium=premium_badge,
+            likes=format_number(user['likes']),
+            plays=format_number(user['plays']),
+            songs=format_number(user['songs']),
+            playlists=format_number(user['playlists']),
+            score=format_number(user['score'])
         )
-        message += f" {premium_badge}\n"
 
-    if user_rank:
-        message += LEADERBOARD_YOUR_RANK.format(rank=user_rank)
+    if user_entry and user_rank:
+        message += LEADERBOARD_YOUR_RANK.format(
+            rank=user_rank,
+            total=total_users,
+            likes=format_number(user_entry['likes']),
+            plays=format_number(user_entry['plays']),
+            songs=format_number(user_entry['songs']),
+            score=format_number(user_entry['score'])
+        )
 
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
