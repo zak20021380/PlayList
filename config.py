@@ -12,8 +12,21 @@ BOT_TOKEN = "8351980310:AAF9WuKI6J7WTBCuLmzA97XZK-OhJVRCXO8"  # جایگزین �
 ADMIN_IDS = [1350508522]  # آیدی تلگرام خودت رو اینجا بذار
 
 # ====== PREMIUM SETTINGS ======
-PREMIUM_PRICE = 200000  # قیمت به تومان
-PREMIUM_DURATION_DAYS = 30  # مدت اشتراک (روز)
+# لیست پلن‌های پیشفرض وقتی دیتابیس خالیه تنظیم میشن
+DEFAULT_PREMIUM_PLANS = [
+    {
+        "id": "monthly",
+        "title": "پلن ماهانه",
+        "price": 200000,
+        "duration_days": 30,
+    },
+    {
+        "id": "seasonal",
+        "title": "پلن سه ماهه",
+        "price": 540000,
+        "duration_days": 90,
+    },
+]
 
 # ====== FREE USER LIMITS ======
 FREE_PLAYLIST_LIMIT = 5
