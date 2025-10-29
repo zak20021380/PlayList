@@ -1,0 +1,56 @@
+{
+  "users": {
+    "1350508522": {
+      "user_id": "1350508522",
+      "username": "Zak_10Q6",
+      "first_name": "Unknown",
+      "playlists": [
+        "pl_1350508522_0"
+      ],
+      "liked_playlists": [],
+      "following": [],
+      "followers": [],
+      "badges": [
+        "first_playlist"
+      ],
+      "premium": false,
+      "premium_until": null,
+      "banned": false,
+      "total_plays": 0,
+      "total_likes_received": 0,
+      "total_songs_uploaded": 0,
+      "notifications_enabled": true,
+      "join_date": "2025-10-29T21:21:06.716832"
+    }
+  },
+  "playlists": {
+    "pl_1350508522_0": {
+      "id": "pl_1350508522_0",
+      "name": "خیلی خوبی",
+      "owner_id": "1350508522",
+      "owner_name": "Unknown",
+      "mood": "sad",
+      "songs": [],
+      "likes": [],
+      "plays": 0,
+      "created_at": "2025-10-29T21:21:54.691224",
+      "is_private": false
+    }
+  },
+  "songs": {},
+  "moods": {
+    "happy": "😊 شاد",
+    "sad": "😢 غمگین",
+    "chill": "😌 آرامش",
+    "party": "🔥 پارتی",
+    "workout": "💪 ورزشی",
+    "romantic": "💖 عاشقانه",
+    "angry": "😤 عصبانی",
+    "focus": "🎯 تمرکز"
+  },
+  "stats": {
+    "total_plays": 0,
+    "total_likes": 0,
+    "total_users": 1
+  }
+}
