@@ -166,9 +166,15 @@ LEADERBOARD_HEADER = """
 
 """
 
-LEADERBOARD_ITEM = "{rank}. {name} - {score} {unit}"
+LEADERBOARD_ITEM = (
+    "{rank} {name}{premium}\n"
+    "❤️ {likes} | ▶️ {plays} | 🎧 {songs} آهنگ | 📂 {playlists} پلی‌لیست | 📈 امتیاز: {score}\n\n"
+)
 
-LEADERBOARD_YOUR_RANK = "\n📍 رتبه تو: #{rank}"
+LEADERBOARD_YOUR_RANK = (
+    "\n📍 رتبه تو: #{rank} از {total}\n"
+    "❤️ {likes} | ▶️ {plays} | 🎧 {songs} آهنگ | 📈 امتیاز: {score}"
+)
 
 # ===== BROWSE/DISCOVER =====
 BROWSE_MENU = """

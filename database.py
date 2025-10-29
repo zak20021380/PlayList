@@ -5,7 +5,9 @@ import json
 import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+
 from config import *
+from utils import calculate_score
 
 
 class Database:
@@ -354,30 +356,80 @@ class Database:
     # ===== LEADERBOARD =====
 
     def get_leaderboard(self, sort_by='likes', limit=20) -> List[Dict]:
-        """Get leaderboard"""
-        users = []
+        """Get leaderboard with detailed ranking data"""
+        users: List[Dict] = []
+
         for user_id, user in self.data['users'].items():
             if user.get('banned'):
                 continue
 
+            likes = user.get('total_likes_received', 0)
+            plays = user.get('total_plays', 0)
+            songs = user.get('total_songs_uploaded', 0)
+            playlists_count = len(user.get('playlists', []))
+            followers_count = len(user.get('followers', []))
+            join_date_raw = user.get('join_date')
+
+            try:
+                join_timestamp = datetime.fromisoformat(join_date_raw).timestamp() if join_date_raw else float('inf')
+            except Exception:
+                join_timestamp = float('inf')
+
+            composite_score = calculate_score(user)
+
             if sort_by == 'likes':
-                score = user.get('total_likes_received', 0)
+                primary_metric = likes
             elif sort_by == 'plays':
-                score = user.get('total_plays', 0)
+                primary_metric = plays
             elif sort_by == 'songs':
-                score = user.get('total_songs_uploaded', 0)
+                primary_metric = songs
             else:
-                score = 0
+                primary_metric = composite_score
+
+            first_name = user.get('first_name') or ''
+            username = user.get('username') or ''
+
+            if first_name and first_name.lower() != 'unknown':
+                display_name = first_name
+            elif username:
+                display_name = f"@{username}"
+            else:
+                display_name = f"کاربر {user_id[-4:]}"
 
             users.append({
                 'user_id': user_id,
-                'name': user['first_name'],
-                'username': user['username'],
-                'score': score,
-                'is_premium': user.get('premium', False)
+                'name': display_name,
+                'username': username,
+                'score': composite_score,
+                'likes': likes,
+                'plays': plays,
+                'songs': songs,
+                'playlists': playlists_count,
+                'followers': followers_count,
+                'is_premium': user.get('premium', False),
+                '_primary_metric': primary_metric,
+                '_join_timestamp': join_timestamp,
             })
 
-        users.sort(key=lambda x: x['score'], reverse=True)
+        users.sort(
+            key=lambda x: (
+                -x['_primary_metric'],
+                -x['score'],
+                -x['likes'],
+                -x['plays'],
+                -x['songs'],
+                -x['followers'],
+                x['_join_timestamp'],
+            )
+        )
+
+        for user in users:
+            user.pop('_primary_metric', None)
+            user.pop('_join_timestamp', None)
+
+        if limit is None or limit <= 0:
+            return users
+
         return users[:limit]
 
     # ===== BROWSE & DISCOVER =====
@@ -468,12 +520,14 @@ class Database:
             'revenue': premium_users * PREMIUM_PRICE,
         }
 
-    def get_user_rank(self, user_id: int) -> int:
+    def get_user_rank(self, user_id: int, sort_by: str = 'likes') -> int:
         """Get user rank in leaderboard"""
-        leaderboard = self.get_leaderboard(sort_by='likes', limit=999999)
-        for i, user in enumerate(leaderboard):
-            if user['user_id'] == str(user_id):
-                return i + 1
+        leaderboard = self.get_leaderboard(sort_by=sort_by, limit=0)
+        user_id_str = str(user_id)
+
+        for i, user in enumerate(leaderboard, 1):
+            if user['user_id'] == user_id_str:
+                return i
         return 0
 
 
