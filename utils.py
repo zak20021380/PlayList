@@ -351,14 +351,29 @@ def create_playlist_buttons(playlist_id: str, user_liked: bool = False):
     return InlineKeyboardMarkup(buttons)
 
 
-def create_song_buttons(song_id: str, playlist_id: str):
+def create_song_buttons(
+    song_id: str,
+    playlist_id: str,
+    *,
+    user_liked: bool = False,
+    already_added: bool = False,
+):
     """Create interaction buttons for individual song"""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+    like_label = "💕 لایک شده" if user_liked else "❤️ لایک"
+    add_label = "✅ اضافه شد" if already_added else "➕ اضافه کن"
+
     buttons = [
         [
-            InlineKeyboardButton("❤️ لایک", callback_data=f"like_song_{song_id}"),
-            InlineKeyboardButton("➕ اضافه کن", callback_data=f"add_song_{song_id}"),
+            InlineKeyboardButton(
+                like_label,
+                callback_data=f"like_song:{playlist_id}:{song_id}",
+            ),
+            InlineKeyboardButton(
+                add_label,
+                callback_data=f"add_song:{playlist_id}:{song_id}",
+            ),
         ]
     ]
 

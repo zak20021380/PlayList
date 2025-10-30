@@ -751,6 +751,8 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'file_size': audio.file_size or 0,
         'channel_message_id': forwarded.message_id,
         'storage_channel_id': STORAGE_CHANNEL_ID,
+        'uploader_id': str(user_id),
+        'uploader_name': update.effective_user.first_name or update.effective_user.full_name,
     }
 
     success, status = db.add_song_to_playlist(playlist['id'], song_data)
@@ -872,6 +874,58 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.answer(ALREADY_LIKED)
 
+    elif data.startswith('like_song:'):
+        try:
+            _, playlist_id, song_id = data.split(':', 2)
+        except ValueError:
+            await query.answer(ERROR_GENERAL, show_alert=True)
+            return
+
+        song = db.data['songs'].get(song_id)
+        if not song:
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
+            return
+
+        if str(user_id) in song.get('likes', []):
+            db.unlike_song(user_id, song_id)
+            await query.answer(UNLIKED)
+            liked = False
+        else:
+            if db.like_song(user_id, song_id):
+                await query.answer(LIKED)
+                liked = True
+
+                uploader_id = song.get('uploader_id')
+                if uploader_id and int(uploader_id) != user_id:
+                    liker = db.get_user(user_id)
+                    notif_text = NOTIF_SONG_LIKED.format(
+                        user=liker['first_name'],
+                        song=song.get('title', 'آهنگ'),
+                    )
+                    await send_notification(int(uploader_id), notif_text, context)
+
+                await send_notification(
+                    user_id,
+                    NOTIF_SONG_LIKED_SELF.format(song=song.get('title', 'آهنگ')),
+                    context,
+                )
+            else:
+                await query.answer(ALREADY_LIKED)
+                return
+
+        already_added = db.user_has_song_copy(user_id, song.get('original_song_id', song_id))
+        try:
+            await query.message.edit_reply_markup(
+                reply_markup=create_song_buttons(
+                    song_id,
+                    playlist_id,
+                    user_liked=liked,
+                    already_added=already_added,
+                )
+            )
+        except Exception as exc:
+            logger.error(f"Failed to update song buttons after like: {exc}")
+
     # Add to playlist
     elif data.startswith('add_'):
         playlist_id = data.replace('add_', '')
@@ -902,6 +956,123 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             CHOOSE_PLAYLIST_TO_ADD,
             reply_markup=InlineKeyboardMarkup(buttons)
         )
+
+    elif data.startswith('add_song:'):
+        try:
+            _, source_playlist_id, song_id = data.split(':', 2)
+        except ValueError:
+            await query.answer(ERROR_GENERAL, show_alert=True)
+            return
+
+        song = db.data['songs'].get(song_id)
+        if not song:
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
+            return
+
+        user_playlists = db.get_user_playlists(user_id)
+        if not user_playlists:
+            await query.answer("اول یه پلی‌لیست بساز!", show_alert=True)
+            return
+
+        context.user_data['pending_song_add'] = {
+            'song_id': song_id,
+            'source_playlist_id': source_playlist_id,
+            'message_id': query.message.message_id,
+        }
+
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    pl['name'],
+                    callback_data=f"add_song_to:{pl['id']}",
+                )
+            ]
+            for pl in user_playlists
+        ]
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=CHOOSE_PLAYLIST_TO_SAVE_SONG,
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+
+    elif data.startswith('add_song_to:'):
+        target_playlist_id = data.replace('add_song_to:', '')
+        pending = context.user_data.get('pending_song_add')
+        if not pending:
+            await query.answer(ERROR_GENERAL, show_alert=True)
+            return
+
+        song_id = pending['song_id']
+        original_song = db.data['songs'].get(song_id)
+        if not original_song:
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
+            return
+
+        success, status = db.add_existing_song_to_playlist(
+            song_id,
+            target_playlist_id,
+            user_id,
+        )
+
+        target_playlist = db.get_playlist(target_playlist_id)
+        if not target_playlist:
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
+            return
+
+        if not success:
+            if status == 'duplicate':
+                await query.answer(
+                    "این آهنگ قبلاً تو این پلی‌لیسته!", show_alert=True
+                )
+            elif status == 'playlist_full':
+                await query.answer(
+                    PLAYLIST_FULL.format(max_songs=target_playlist.get('max_songs', 0)),
+                    show_alert=True,
+                )
+            else:
+                await query.answer(ERROR_GENERAL, show_alert=True)
+            return
+
+        await query.answer("انجام شد! ✅")
+
+        await query.edit_message_text(
+            ADDED_TO_PLAYLIST.format(playlist=target_playlist['name'])
+        )
+
+        source_uploader = original_song.get('uploader_id')
+        if source_uploader and int(source_uploader) != user_id:
+            adder = db.get_user(user_id)
+            notif_text = NOTIF_ADDED.format(
+                user=adder['first_name'],
+                song=original_song.get('title', 'آهنگ'),
+            )
+            await send_notification(int(source_uploader), notif_text, context)
+
+        await send_notification(
+            user_id,
+            NOTIF_SONG_ADDED_SELF.format(
+                song=original_song.get('title', 'آهنگ'),
+                playlist=target_playlist['name'],
+            ),
+            context,
+        )
+
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=user_id,
+                message_id=pending['message_id'],
+                reply_markup=create_song_buttons(
+                    song_id,
+                    pending['source_playlist_id'],
+                    user_liked=str(user_id) in original_song.get('likes', []),
+                    already_added=True,
+                ),
+            )
+        except Exception as exc:
+            logger.error(f"Failed to update song buttons after add: {exc}")
+
+        context.user_data.pop('pending_song_add', None)
 
     # Play playlist
     elif data.startswith('play_'):
@@ -969,6 +1140,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 song = db.data['songs'].get(song_id)
                 if song:
                     caption = get_song_info(song)
+                    original_id = song.get('original_song_id', song_id)
+                    user_liked = str(user_id) in song.get('likes', [])
+                    already_added = db.user_has_song_copy(user_id, original_id)
                     try:
                         channel_message_id = song.get('channel_message_id')
                         storage_channel_id = song.get('storage_channel_id', STORAGE_CHANNEL_ID)
@@ -979,7 +1153,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 message_id=channel_message_id,
                                 caption=caption,
                                 parse_mode=ParseMode.MARKDOWN,
-                                reply_markup=create_song_buttons(song_id, playlist_id),
+                                reply_markup=create_song_buttons(
+                                    song_id,
+                                    playlist_id,
+                                    user_liked=user_liked,
+                                    already_added=already_added,
+                                ),
                             )
                         elif song.get('file_id'):
                             await context.bot.send_audio(
@@ -987,7 +1166,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 audio=song['file_id'],
                                 caption=caption,
                                 parse_mode=ParseMode.MARKDOWN,
-                                reply_markup=create_song_buttons(song_id, playlist_id)
+                                reply_markup=create_song_buttons(
+                                    song_id,
+                                    playlist_id,
+                                    user_liked=user_liked,
+                                    already_added=already_added,
+                                ),
                             )
                         else:
                             raise ValueError('Missing song storage reference')
