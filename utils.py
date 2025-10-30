@@ -194,9 +194,12 @@ def is_valid_audio_file(file_size: int, duration: int) -> bool:
 # ===== NOTIFICATION HELPERS =====
 
 def should_send_notification(user_id: int, db) -> bool:
-    """Check if user has notifications enabled"""
+    """Check if user has notifications enabled and is not banned"""
     user = db.get_user(user_id)
     if not user:
+        return False
+    # Don't send notifications to banned users
+    if user.get('banned', False):
         return False
     return user.get('notifications_enabled', True)
 

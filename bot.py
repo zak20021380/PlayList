@@ -1020,7 +1020,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         playlist = db.get_playlist(playlist_id)
 
         if not playlist:
-            await query.edit_message_text(ERROR_NOT_FOUND)
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
             return
 
         if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
@@ -1070,6 +1070,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(LIKED)
                 liked = True
 
+                # Send notification to song uploader
                 uploader_id = song.get('uploader_id')
                 if uploader_id and int(uploader_id) != user_id:
                     liker = db.get_user(user_id)
@@ -1078,6 +1079,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         song=song.get('title', 'آهنگ'),
                     )
                     await send_notification(int(uploader_id), notif_text, context)
+
+                # Send notification to playlist owner
+                playlist = db.get_playlist(playlist_id)
+                if playlist:
+                    owner_id = int(playlist['owner_id'])
+                    # Only notify if owner is different from liker and uploader
+                    if owner_id != user_id and (not uploader_id or owner_id != int(uploader_id)):
+                        liker = db.get_user(user_id)
+                        notif_text = NOTIF_SONG_LIKED.format(
+                            user=liker['first_name'],
+                            song=song.get('title', 'آهنگ'),
+                        )
+                        await send_notification(owner_id, notif_text, context)
 
                 await send_notification(
                     user_id,
@@ -1088,18 +1102,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(ALREADY_LIKED)
                 return
 
-        already_added = db.user_has_song_copy(user_id, song.get('original_song_id', song_id))
-        try:
-            await query.message.edit_reply_markup(
-                reply_markup=create_song_buttons(
-                    song_id,
-                    playlist_id,
-                    user_liked=liked,
-                    already_added=already_added,
-                )
-            )
-        except Exception as exc:
-            logger.error(f"Failed to update song buttons after like: {exc}")
+        # Note: Do not edit message for audio messages (causes "No text in message to edit" error)
+        # Only use query.answer() for feedback
 
     # Add to playlist
     elif data.startswith('add_'):
