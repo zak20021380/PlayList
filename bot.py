@@ -204,14 +204,14 @@ async def new_playlist_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message = (
                 base_message
                 + "\n\n"
-                + "فقط فایل صوتی بفرست و تو کپشن اسم پلی‌لیست رو بنویس."
+                + "فقط فایل صوتی بفرست؛ اگه اسم پلی‌لیست رو تو کپشن هم بنویسی سریع‌تر می‌فهمم!"
                 + f"\nبا {MIN_SONGS_TO_PUBLISH} آهنگ منتشر میشه و بعدش هرچقدر خواستی آهنگ اضافه کن!"
             )
         else:
             message = (
                 f"{base_message}\n"
                 + PLAYLIST_CREATED_FREE.format(max_songs=max_songs)
-                + "\n\nفقط فایل صوتی بفرست و تو کپشن اسم پلی‌لیست رو بنویس."
+                + "\n\nفقط فایل صوتی بفرست؛ اگر اسم پلی‌لیست رو تو کپشن بنویسی کارم راحت‌تر میشه."
                 + f"\nبعد از {MIN_SONGS_TO_PUBLISH} آهنگ منتشر میشه و ظرفیتش تکمیل میشه."
             )
 
@@ -694,26 +694,30 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(ERROR_NO_AUDIO)
         return
 
-    # Check caption
+    # Determine target playlist
     caption = update.message.caption
-    if not caption:
-        await update.message.reply_text(ERROR_NO_CAPTION)
-        return
-
-    # Find playlist
     user_playlists = db.get_user_playlists(user_id)
     playlist = None
 
-    for pl in user_playlists:
-        if pl['name'].lower() == caption.lower():
-            playlist = pl
-            break
+    if caption:
+        for pl in user_playlists:
+            if pl['name'].lower() == caption.lower():
+                playlist = pl
+                break
 
     if not playlist:
-        playlists_list = "\n".join([f"• {pl['name']}" for pl in user_playlists])
-        await update.message.reply_text(
-            UPLOAD_NO_PLAYLIST.format(playlists=playlists_list if playlists_list else "هنوز پلی‌لیستی نساختی!")
-        )
+        playlist = db.get_active_playlist(user_id)
+
+    if not playlist:
+        if not user_playlists:
+            await update.message.reply_text(
+                UPLOAD_NO_PLAYLIST.format(playlists="هنوز پلی‌لیستی نساختی!")
+            )
+        else:
+            playlists_list = "پلی‌لیست‌های تو:\n" + "\n".join([f"• {pl['name']}" for pl in user_playlists])
+            await update.message.reply_text(
+                UPLOAD_NO_PLAYLIST.format(playlists=playlists_list)
+            )
         return
 
     # Get audio info
@@ -726,17 +730,10 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'file_size': audio.file_size or 0,
     }
 
-    max_songs = playlist.get('max_songs', 0) or 0
-    current_count = len(playlist.get('songs', []))
-
-    if max_songs and current_count >= max_songs:
-        await update.message.reply_text(
-            PLAYLIST_FULL.format(max_songs=max_songs),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return
-
     success, status = db.add_song_to_playlist(playlist['id'], song_data)
+
+    if success:
+        db.set_active_playlist(user_id, playlist['id'])
 
     if not success:
         if status == 'playlist_full':
