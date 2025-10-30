@@ -27,10 +27,10 @@ class ZarinPal:
             self.verify_url = ZARINPAL_VERIFY_URL
             self.payment_url = ZARINPAL_PAYMENT_URL
 
-    def create_payment(self, amount: int, description: str, user_id: int) -> Optional[str]:
+    def create_payment(self, amount: int, description: str, user_id: int) -> Optional[Dict[str, str]]:
         """
         Create payment request
-        Returns: Payment URL or None
+        Returns: dict with payment_url and authority or None
         """
         data = {
             "merchant_id": self.merchant_id,
@@ -46,7 +46,7 @@ class ZarinPal:
             if result.get('data', {}).get('code') == 100:
                 authority = result['data']['authority']
                 payment_url = f"{self.payment_url}{authority}"
-                return payment_url
+                return {"payment_url": payment_url, "authority": authority}
             else:
                 print(f"ZarinPal Error: {result}")
                 return None

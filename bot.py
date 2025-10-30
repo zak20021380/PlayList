@@ -1887,20 +1887,55 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("پلن پیدا نشد!")
             return
 
-        payment_url = zarinpal.create_payment(
+        price_text = format_number(plan['price'])
+        buttons = [
+            [InlineKeyboardButton("✅ فیلترشکن خاموشه، لینک بساز", callback_data=f"confirm_plan_{plan_id}")],
+            [InlineKeyboardButton("🔙 پلن‌های دیگر", callback_data="buy_premium")],
+        ]
+
+        await query.edit_message_text(
+            PREMIUM_VPN_WARNING.format(
+                title=escape_markdown(plan['title']),
+                price=price_text,
+                days=plan['duration_days'],
+            ),
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+
+    elif data.startswith('confirm_plan_'):
+        plan_id = data.replace('confirm_plan_', '')
+        plan = db.get_premium_plan(plan_id)
+
+        if not plan:
+            await query.answer("پلن پیدا نشد!", show_alert=True)
+            return
+
+        payment_data = zarinpal.create_payment(
             amount=plan['price'],
             description=f"خرید {plan['title']} پلی‌لیست - {user_id}",
             user_id=user_id
         )
 
-        if payment_url:
+        if payment_data and payment_data.get('payment_url') and payment_data.get('authority'):
+            db.set_pending_payment(
+                user_id,
+                authority=payment_data['authority'],
+                amount=plan['price'],
+                plan_id=plan_id,
+                title=plan['title'],
+                duration_days=plan['duration_days'],
+            )
+
             buttons = [
-                [InlineKeyboardButton("💳 پرداخت", url=payment_url)],
+                [InlineKeyboardButton("💳 پرداخت", url=payment_data['payment_url'])],
+                [InlineKeyboardButton("✅ پرداخت کردم", callback_data="verify_payment")],
                 [InlineKeyboardButton("🔙 پلن‌های دیگر", callback_data="buy_premium")],
             ]
+
             await query.edit_message_text(
                 PREMIUM_PAYMENT_INSTRUCTIONS.format(
-                    title=plan['title'],
+                    title=escape_markdown(plan['title']),
                     price=plan['price'],
                     days=plan['duration_days'],
                 ),
@@ -1908,7 +1943,59 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(buttons)
             )
         else:
-            await query.edit_message_text("مشکلی در ایجاد لینک پرداخت پیش اومد! لطفاً بعداً تلاش کن.")
+            error_buttons = [[InlineKeyboardButton("🔙 پلن‌های دیگر", callback_data="buy_premium")]]
+            await query.edit_message_text(
+                "مشکلی در ایجاد لینک پرداخت پیش اومد! لطفاً بعداً تلاش کن.",
+                reply_markup=InlineKeyboardMarkup(error_buttons)
+            )
+
+    elif data == 'verify_payment':
+        user = db.get_user(user_id)
+        pending = user.get('pending_payment') if user else None
+
+        if not pending:
+            await query.answer(PREMIUM_NO_PENDING_PAYMENT, show_alert=True)
+            return
+
+        authority = pending.get('authority')
+        amount = pending.get('amount')
+        plan_id = pending.get('plan_id')
+        duration_days = pending.get('duration_days') or 30
+
+        if not authority or not amount:
+            await query.answer(PREMIUM_VERIFY_FAILED, show_alert=True)
+            return
+
+        if zarinpal.verify_payment(authority, amount):
+            db.activate_premium(
+                user_id,
+                days=duration_days,
+                plan_id=plan_id,
+                price=amount,
+            )
+            db.clear_pending_payment(user_id)
+
+            user = db.get_user(user_id)
+            expiry_raw = user.get('premium_until') if user else None
+            expiry_date = format_date(expiry_raw) if expiry_raw else "—"
+
+            success_buttons = [[InlineKeyboardButton("🔙 برگشت", callback_data="back_main")]]
+
+            await query.edit_message_text(
+                PREMIUM_ACTIVATED.format(date=expiry_date),
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(success_buttons)
+            )
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=PREMIUM_BENEFITS_REMINDER,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            await query.answer("پرداخت با موفقیت تایید شد!", show_alert=True)
+        else:
+            await query.answer(PREMIUM_VERIFY_FAILED, show_alert=True)
 
 
 # ===== ADMIN HANDLERS =====
