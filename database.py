@@ -4,6 +4,7 @@
 import copy
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -35,6 +36,12 @@ class Database:
 
         data.setdefault('song_daily_likes', {})
         data.setdefault('last_top_song_broadcast', None)
+
+        moods = data.get('moods')
+        if not isinstance(moods, dict) or not moods:
+            data['moods'] = copy.deepcopy(DEFAULT_MOODS)
+        else:
+            data['moods'] = dict(moods)
 
         # Update users with new premium fields if missing
         for user in data.get('users', {}).values():
@@ -85,7 +92,7 @@ class Database:
             'users': {},
             'playlists': {},
             'songs': {},
-            'moods': DEFAULT_MOODS,
+            'moods': copy.deepcopy(DEFAULT_MOODS),
             'stats': {
                 'total_plays': 0,
                 'total_likes': 0,
@@ -372,6 +379,11 @@ class Database:
             PREMIUM_SONGS_PER_PLAYLIST if is_prem else FREE_SONGS_PER_PLAYLIST
         )
 
+        available_moods = self.data.get('moods', {})
+        if mood not in available_moods:
+            fallback_mood = next(iter(available_moods.keys()), None)
+            mood = fallback_mood or 'happy'
+
         playlist = {
             'id': playlist_id,
             'name': name,
@@ -402,6 +414,65 @@ class Database:
     def get_playlist(self, playlist_id: str) -> Optional[Dict]:
         """Get playlist by ID"""
         return self.data['playlists'].get(playlist_id)
+
+    def get_moods(self) -> Dict[str, str]:
+        """Return available playlist moods/categories"""
+        moods = self.data.get('moods') or {}
+        if not isinstance(moods, dict):
+            return dict(copy.deepcopy(DEFAULT_MOODS))
+        return dict(moods)
+
+    def get_default_mood(self) -> str:
+        """Return default mood key used for new playlists"""
+        moods = self.get_moods()
+        if moods:
+            return next(iter(moods.keys()))
+        return 'happy'
+
+    def add_mood(self, key: str, title: str) -> Tuple[bool, str]:
+        """Add a new playlist category"""
+        moods = self.data.setdefault('moods', {})
+
+        normalized_key = key.strip().lower()
+        normalized_key = re.sub(r"\s+", "_", normalized_key)
+
+        if not normalized_key or not re.fullmatch(r"[a-z0-9_]+", normalized_key):
+            return False, 'invalid_key'
+
+        display_title = title.strip()
+        if not display_title:
+            return False, 'invalid_title'
+
+        if normalized_key in moods:
+            return False, 'exists'
+
+        moods[normalized_key] = display_title
+        self.save_data()
+        return True, normalized_key
+
+    def delete_mood(self, key: str) -> Tuple[bool, str]:
+        """Delete mood and return fallback mood key"""
+        moods = self.data.get('moods', {})
+
+        if key not in moods:
+            return False, 'not_found'
+
+        if len(moods) <= 1:
+            return False, 'last_one'
+
+        fallback_key = None
+        for candidate in moods.keys():
+            if candidate != key:
+                fallback_key = candidate
+                break
+
+        for playlist in self.data.get('playlists', {}).values():
+            if playlist.get('mood') == key:
+                playlist['mood'] = fallback_key
+
+        moods.pop(key)
+        self.save_data()
+        return True, fallback_key or ''
 
     def delete_playlist(self, playlist_id: str) -> List[Tuple[int, int]]:
         """Delete playlist and return storage channel messages to remove"""
