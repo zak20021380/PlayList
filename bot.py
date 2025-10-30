@@ -251,6 +251,7 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = escape_markdown(pl['name'])
         status = pl.get('status', 'published')
         status_icon = '✅' if status == 'published' else '📝'
+        status_text = 'منتشر شده' if status == 'published' else 'پیش‌نویس'
         max_songs = pl.get('max_songs', 0) or 0
 
         if max_songs and max_songs < PREMIUM_SONGS_PER_PLAYLIST:
@@ -262,7 +263,7 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             count_display = str(songs_count)
 
-        message += f"{status_icon} {mood} **{name}**\n"
+        message += f"{status_icon} {mood} **{name}** — {status_text}\n"
         message += f"   🎧 {count_display} | ❤️ {likes_count} لایک\n"
 
         if status != 'published':
@@ -720,14 +721,36 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
+    max_songs = playlist.get('max_songs', 0) or 0
+    current_count = len(playlist.get('songs', []))
+    if max_songs and current_count >= max_songs:
+        await update.message.reply_text(
+            PLAYLIST_FULL.format(max_songs=max_songs),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    # Store audio in storage channel
+    try:
+        forwarded = await context.bot.forward_message(
+            chat_id=STORAGE_CHANNEL_ID,
+            from_chat_id=update.effective_chat.id,
+            message_id=update.message.message_id,
+        )
+    except Exception as exc:
+        logger.error(f"Failed to forward audio to storage channel: {exc}")
+        await update.message.reply_text(ERROR_GENERAL)
+        return
+
     # Get audio info
     audio = update.message.audio
     song_data = {
-        'file_id': audio.file_id,
         'title': audio.title or 'Unknown',
         'performer': audio.performer or 'Unknown',
         'duration': audio.duration or 0,
         'file_size': audio.file_size or 0,
+        'channel_message_id': forwarded.message_id,
+        'storage_channel_id': STORAGE_CHANNEL_ID,
     }
 
     success, status = db.add_song_to_playlist(playlist['id'], song_data)
@@ -741,6 +764,8 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 PLAYLIST_FULL.format(max_songs=playlist.get('max_songs', 0)),
                 parse_mode=ParseMode.MARKDOWN,
             )
+        elif status == 'storage_missing':
+            await update.message.reply_text(ERROR_GENERAL)
         else:
             await update.message.reply_text(ERROR_GENERAL)
         return
@@ -945,13 +970,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if song:
                     caption = get_song_info(song)
                     try:
-                        await context.bot.send_audio(
-                            chat_id=user_id,
-                            audio=song['file_id'],
-                            caption=caption,
-                            parse_mode=ParseMode.MARKDOWN,
-                            reply_markup=create_song_buttons(song_id, playlist_id)
-                        )
+                        channel_message_id = song.get('channel_message_id')
+                        storage_channel_id = song.get('storage_channel_id', STORAGE_CHANNEL_ID)
+                        if channel_message_id and storage_channel_id:
+                            await context.bot.copy_message(
+                                chat_id=user_id,
+                                from_chat_id=storage_channel_id,
+                                message_id=channel_message_id,
+                                caption=caption,
+                                parse_mode=ParseMode.MARKDOWN,
+                                reply_markup=create_song_buttons(song_id, playlist_id),
+                            )
+                        elif song.get('file_id'):
+                            await context.bot.send_audio(
+                                chat_id=user_id,
+                                audio=song['file_id'],
+                                caption=caption,
+                                parse_mode=ParseMode.MARKDOWN,
+                                reply_markup=create_song_buttons(song_id, playlist_id)
+                            )
+                        else:
+                            raise ValueError('Missing song storage reference')
                         await asyncio.sleep(0.5)
                     except Exception as e:
                         logger.error(f"Failed to send audio: {e}")

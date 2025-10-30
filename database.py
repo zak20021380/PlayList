@@ -40,9 +40,25 @@ class Database:
             user.setdefault('active_playlist_id', None)
 
         # Update playlists with new fields
+        users = data.get('users', {})
+
         for playlist in data.get('playlists', {}).values():
-            playlist.setdefault('status', 'published')
-            playlist.setdefault('max_songs', 0)
+            status = playlist.setdefault('status', 'draft')
+            owner_id = str(playlist.get('owner_id', ''))
+            owner = users.get(owner_id)
+            default_limit = (
+                PREMIUM_SONGS_PER_PLAYLIST if owner and owner.get('premium') else FREE_SONGS_PER_PLAYLIST
+            )
+            playlist.setdefault('max_songs', default_limit)
+            playlist.setdefault('published_at', None)
+            if status not in ('draft', 'published'):
+                playlist['status'] = 'draft'
+            if playlist['status'] == 'draft' and len(playlist.get('songs', [])) >= MIN_SONGS_TO_PUBLISH:
+                playlist['status'] = 'published'
+
+        for song in data.get('songs', {}).values():
+            song.setdefault('channel_message_id', None)
+            song.setdefault('storage_channel_id', STORAGE_CHANNEL_ID)
 
         return data
 
@@ -246,6 +262,7 @@ class Database:
             'is_private': False,
             'status': 'draft',
             'max_songs': max_songs,
+            'published_at': None,
         }
 
         self.data['playlists'][playlist_id] = playlist
@@ -344,37 +361,27 @@ class Database:
         if not playlist:
             return False, 'playlist_not_found'
 
-        owner_id = int(playlist['owner_id'])
-        owner_is_premium = self.is_premium(owner_id)
-
-        stored_limit = playlist.get('max_songs', 0) or 0
-        if owner_is_premium:
-            premium_limit = PREMIUM_SONGS_PER_PLAYLIST
-            if premium_limit and premium_limit > 0:
-                if stored_limit == 0 or stored_limit < premium_limit:
-                    stored_limit = premium_limit
-                    playlist['max_songs'] = premium_limit
-            else:
-                stored_limit = 0
-                playlist['max_songs'] = 0
-        else:
-            if stored_limit == 0 or stored_limit > FREE_SONGS_PER_PLAYLIST:
-                stored_limit = FREE_SONGS_PER_PLAYLIST
-                playlist['max_songs'] = FREE_SONGS_PER_PLAYLIST
-
-        max_songs = stored_limit
+        max_songs = playlist.get('max_songs', 0) or 0
         current_count = len(playlist.get('songs', []))
         if max_songs and current_count >= max_songs:
             return False, 'playlist_full'
+
+        if not song_data.get('channel_message_id'):
+            return False, 'storage_missing'
+
+        song_data['channel_message_id'] = int(song_data['channel_message_id'])
 
         # Generate song ID
         song_id = f"song_{len(self.data['songs'])}"
         song_data['id'] = song_id
         song_data['playlist_id'] = playlist_id
         song_data['uploaded_at'] = datetime.now().isoformat()
+        song_data.setdefault('storage_channel_id', STORAGE_CHANNEL_ID)
 
         self.data['songs'][song_id] = song_data
         playlist['songs'].append(song_id)
+
+        owner_id = int(playlist['owner_id'])
 
         # Update user stats
         user = self.get_user(owner_id)
@@ -391,6 +398,7 @@ class Database:
         if playlist.get('status') != 'published':
             if current_count >= MIN_SONGS_TO_PUBLISH:
                 playlist['status'] = 'published'
+                playlist['published_at'] = datetime.now().isoformat()
                 message_key = 'playlist_published'
             else:
                 message_key = 'draft_progress'

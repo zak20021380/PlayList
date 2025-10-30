@@ -11,6 +11,10 @@ BOT_TOKEN = "8351980310:AAF9WuKI6J7WTBCuLmzA97XZK-OhJVRCXO8"  # جایگزین �
 # آیدی تلگرام خودت رو از @userinfobot بگیر
 ADMIN_IDS = [1350508522]  # آیدی تلگرام خودت رو اینجا بذار
 
+# ====== STORAGE CHANNEL ======
+# همه‌ی آهنگ‌ها به صورت امن در این کانال ذخیره میشن
+STORAGE_CHANNEL_ID = -1001234567890
+
 # ====== PREMIUM SETTINGS ======
 # لیست پلن‌های پیشفرض وقتی دیتابیس خالیه تنظیم میشن
 DEFAULT_PREMIUM_PLANS = [
