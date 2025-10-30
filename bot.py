@@ -1254,8 +1254,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     add_count=add_count,
                 )
             )
+        except BadRequest as exc:
+            logger.warning(
+                "Unable to update song buttons after like: %s",
+                exc,
+            )
         except Exception as exc:
-            logger.error(f"Failed to update song buttons after like: {exc}")
+            logger.error(
+                "Unexpected error updating song buttons after like: %s",
+                exc,
+            )
+
+        return
 
     # Add to playlist
     elif data.startswith('add_'):
