@@ -15,6 +15,7 @@ from telegram.ext import (
     ConversationHandler,
 )
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 import asyncio
 
 from config import *
@@ -82,11 +83,36 @@ async def send_response(
     message = update.effective_message
 
     if update.callback_query:
-        await message.edit_text(
-            text,
-            parse_mode=parse_mode,
-            reply_markup=reply_markup,
-        )
+        try:
+            if message.text:
+                await message.edit_text(
+                    text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
+            elif message.caption:
+                await message.edit_caption(
+                    caption=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
+            else:
+                await message.reply_text(
+                    text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
+        except BadRequest as exc:
+            if 'message is not modified' in str(exc).lower():
+                return
+            if message.caption:
+                await message.reply_text(
+                    text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
+            else:
+                raise
     else:
         await message.reply_text(
             text,
