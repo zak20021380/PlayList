@@ -37,6 +37,7 @@ class Database:
         for user in data.get('users', {}).values():
             user.setdefault('premium_plan_id', None)
             user.setdefault('premium_price', 0)
+            user.setdefault('active_playlist_id', None)
 
         # Update playlists with new fields
         for playlist in data.get('playlists', {}).values():
@@ -92,6 +93,7 @@ class Database:
             'total_songs_uploaded': 0,
             'notifications_enabled': True,
             'join_date': datetime.now().isoformat(),
+            'active_playlist_id': None,
         }
 
         self.data['users'][user_id] = user
@@ -248,6 +250,7 @@ class Database:
 
         self.data['playlists'][playlist_id] = playlist
         user['playlists'].append(playlist_id)
+        user['active_playlist_id'] = playlist_id
         self.save_data()
 
         # Check for first playlist badge
@@ -268,6 +271,8 @@ class Database:
             user = self.get_user(int(user_id))
             if user and playlist_id in user['playlists']:
                 user['playlists'].remove(playlist_id)
+                if user.get('active_playlist_id') == playlist_id:
+                    user['active_playlist_id'] = self._find_fallback_playlist_id(int(user_id))
             del self.data['playlists'][playlist_id]
             self.save_data()
 
@@ -291,13 +296,73 @@ class Database:
 
         return drafts + published
 
+    def _find_fallback_playlist_id(self, user_id: int) -> Optional[str]:
+        """Return the most recent playlist id for user"""
+        user = self.get_user(user_id)
+        if not user:
+            return None
+        for pl_id in reversed(user.get('playlists', [])):
+            playlist = self.get_playlist(pl_id)
+            if playlist and playlist.get('owner_id') == str(user_id):
+                return pl_id
+        return None
+
+    def get_active_playlist(self, user_id: int) -> Optional[Dict]:
+        """Return user's active playlist if available"""
+        user = self.get_user(user_id)
+        if not user:
+            return None
+
+        playlist_id = user.get('active_playlist_id')
+        if playlist_id:
+            playlist = self.get_playlist(playlist_id)
+            if playlist and playlist.get('owner_id') == str(user_id):
+                return playlist
+
+        fallback_id = self._find_fallback_playlist_id(user_id)
+        if fallback_id:
+            return self.get_playlist(fallback_id)
+        return None
+
+    def set_active_playlist(self, user_id: int, playlist_id: Optional[str]):
+        """Persist user's active playlist"""
+        user = self.get_user(user_id)
+        if not user:
+            return
+
+        if playlist_id:
+            playlist = self.get_playlist(playlist_id)
+            if not playlist or playlist.get('owner_id') != str(user_id):
+                return
+
+        user['active_playlist_id'] = playlist_id
+        self.save_data()
+
     def add_song_to_playlist(self, playlist_id: str, song_data: Dict) -> Tuple[bool, str]:
         """Add song to playlist"""
         playlist = self.get_playlist(playlist_id)
         if not playlist:
             return False, 'playlist_not_found'
 
-        max_songs = playlist.get('max_songs', 0) or 0
+        owner_id = int(playlist['owner_id'])
+        owner_is_premium = self.is_premium(owner_id)
+
+        stored_limit = playlist.get('max_songs', 0) or 0
+        if owner_is_premium:
+            premium_limit = PREMIUM_SONGS_PER_PLAYLIST
+            if premium_limit and premium_limit > 0:
+                if stored_limit == 0 or stored_limit < premium_limit:
+                    stored_limit = premium_limit
+                    playlist['max_songs'] = premium_limit
+            else:
+                stored_limit = 0
+                playlist['max_songs'] = 0
+        else:
+            if stored_limit == 0 or stored_limit > FREE_SONGS_PER_PLAYLIST:
+                stored_limit = FREE_SONGS_PER_PLAYLIST
+                playlist['max_songs'] = FREE_SONGS_PER_PLAYLIST
+
+        max_songs = stored_limit
         current_count = len(playlist.get('songs', []))
         if max_songs and current_count >= max_songs:
             return False, 'playlist_full'
@@ -312,7 +377,6 @@ class Database:
         playlist['songs'].append(song_id)
 
         # Update user stats
-        owner_id = int(playlist['owner_id'])
         user = self.get_user(owner_id)
         if user:
             user['total_songs_uploaded'] += 1
