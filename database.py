@@ -422,6 +422,20 @@ class Database:
 
     # ===== LIKES & INTERACTIONS =====
 
+    def publish_playlist(self, playlist_id: str) -> bool:
+        """Force publish a playlist manually"""
+        playlist = self.get_playlist(playlist_id)
+        if not playlist:
+            return False
+
+        if playlist.get('status') == 'published':
+            return False
+
+        playlist['status'] = 'published'
+        playlist['published_at'] = datetime.now().isoformat()
+        self.save_data()
+        return True
+
     def like_playlist(self, user_id: int, playlist_id: str) -> bool:
         """Like a playlist"""
         playlist = self.get_playlist(playlist_id)

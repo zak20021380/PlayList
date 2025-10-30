@@ -327,10 +327,14 @@ async def new_playlist_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
             max_songs = FREE_SONGS_PER_PLAYLIST
 
         if MIN_SONGS_TO_PUBLISH <= 1:
-            publish_line = "همین که اولین آهنگ رو بفرستی پلی‌لیست منتشر میشه؛ لازم نیست همه آهنگ‌ها رو یکجا بفرستی."
+            publish_line = (
+                "همین که اولین آهنگ رو بفرستی پلی‌لیست منتشر میشه؛"
+                " اما هر وقت خواستی میتونی با /publishplaylist هم منتشرش کنی."
+            )
         else:
             publish_line = (
-                f"بعد از {MIN_SONGS_TO_PUBLISH} آهنگ منتشر میشه؛ لازم نیست همه آهنگ‌ها رو یکجا بفرستی."
+                f"بعد از {MIN_SONGS_TO_PUBLISH} آهنگ خودکار منتشر میشه؛"
+                " ولی اگر زودتر آماده بودی با /publishplaylist هم میتونی منتشرش کنی."
             )
 
         if is_premium:
@@ -346,7 +350,7 @@ async def new_playlist_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 + PLAYLIST_CREATED_FREE.format(max_songs=max_songs)
                 + "\n\n"
                 + "فقط فایل صوتی بفرست؛ اگر اسم پلی‌لیست رو تو کپشن بنویسی کارم راحت‌تر میشه."
-                + f"\n{publish_line}\nظرفیتت تا {max_songs} آهنگ بازه و میتونی هر وقت خواستی ادامه بدی."
+                + f"\n{publish_line}\nظرفیتت تا {max_songs} آهنگ بازه و هر وقت خواستی (حتی با 1 یا 2 آهنگ) با /publishplaylist میتونی پلی‌لیست رو منتشر کنی."
             )
 
         await query.edit_message_text(
@@ -357,6 +361,45 @@ async def new_playlist_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(ERROR_GENERAL)
 
     return ConversationHandler.END
+
+
+async def publish_playlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Publish the user's active playlist manually"""
+    user_id = update.effective_user.id
+    playlist = db.get_active_playlist(user_id)
+
+    if not playlist or playlist.get('owner_id') != str(user_id):
+        await update.message.reply_text(
+            PLAYLIST_PUBLISH_NO_ACTIVE,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    if not playlist.get('songs'):
+        await update.message.reply_text(
+            PLAYLIST_PUBLISH_NO_SONGS,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    if playlist.get('status') == 'published':
+        await update.message.reply_text(
+            PLAYLIST_PUBLISH_ALREADY,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    if db.publish_playlist(playlist['id']):
+        playlist_name_md = escape_markdown(playlist.get('name', 'پلی‌لیست'))
+        await update.message.reply_text(
+            PLAYLIST_PUBLISH_SUCCESS.format(name=playlist_name_md),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    else:
+        await update.message.reply_text(
+            ERROR_GENERAL,
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -404,6 +447,7 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
             remaining = max(MIN_SONGS_TO_PUBLISH - songs_count, 0)
             if remaining > 0:
                 message += f"   ⏳ هنوز {remaining} آهنگ دیگه لازمه تا منتشر بشه\n"
+            message += "   ✅ هر وقت آماده بودی با /publishplaylist میتونی منتشرش کنی\n"
 
         message += "\n"
 
@@ -926,11 +970,24 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     elif status == 'draft_progress':
         remaining = max(MIN_SONGS_TO_PUBLISH - updated_count, 0)
+        max_songs = updated_playlist.get('max_songs', 0) or 0
+        if max_songs and max_songs >= PREMIUM_SONGS_PER_PLAYLIST:
+            maximum_display = 'بی‌نهایت'
+        elif max_songs:
+            maximum_display = str(max_songs)
+        else:
+            maximum_display = str(max(MIN_SONGS_TO_PUBLISH, updated_count))
+
+        if remaining > 0:
+            auto_hint = f"اگر {remaining} آهنگ دیگه بفرستی خودش خودکار منتشر میشه."
+        else:
+            auto_hint = "همین حالا می‌تونی منتشرش کنی!"
+
         await update.message.reply_text(
             PLAYLIST_DRAFT_PROGRESS.format(
                 current=updated_count,
-                minimum=MIN_SONGS_TO_PUBLISH,
-                remaining=remaining,
+                maximum=maximum_display,
+                auto_hint=auto_hint,
             ),
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -1532,6 +1589,8 @@ def main():
     application.add_handler(CommandHandler("profile", profile))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
     application.add_handler(CommandHandler("premium", premium_info))
+    application.add_handler(CommandHandler("publishplaylist", publish_playlist_command))
+    application.add_handler(CommandHandler("finishplaylist", publish_playlist_command))
     application.add_handler(CommandHandler("admin", admin_panel))
     application.add_handler(CommandHandler("stats", admin_stats_cmd))
 
