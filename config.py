@@ -79,6 +79,7 @@ LEADERBOARD_TOP_COUNT = 20
 ENABLE_NOTIFICATIONS = True
 BOT_NAME = "پلی‌لیست"
 BOT_USERNAME = "@playlist_bot"
+NOTIFICATION_DELAY = 0.2
 
 # ====== ZARINPAL PAYMENT GATEWAY ======
 ZARINPAL_MERCHANT_ID = "d97f7648-614f-4025-bee2-5f3cda6d8fcd"  # مرچنت آیدی زرین‌پال

@@ -115,10 +115,18 @@ ADDED_TO_PLAYLIST = "به پلی‌لیست «{playlist}» اضافه شد! ✅"
 
 CHOOSE_PLAYLIST_TO_ADD = "به کدوم پلی‌لیستت اضافه کنم؟ 🤔"
 
+CHOOSE_PLAYLIST_TO_SAVE_SONG = "کدوم پلی‌لیستت رو برای ذخیره آهنگ انتخاب می‌کنی؟ 🎯"
+
 # ===== NOTIFICATION MESSAGES =====
 NOTIF_LIKED = "🔔 {user} پلی‌لیست «{playlist}» تو رو لایک کرد! ❤️"
 
 NOTIF_ADDED = "🔔 {user} آهنگ «{song}» تو رو به پلی‌لیستش اضافه کرد! 🎵"
+
+NOTIF_SONG_LIKED = "🔔 {user} آهنگ «{song}» تو رو لایک کرد! ❤️"
+
+NOTIF_SONG_LIKED_SELF = "❤️ آهنگ «{song}» رو لایک کردی!"
+
+NOTIF_SONG_ADDED_SELF = "➕ آهنگ «{song}» رو به «{playlist}» اضافه کردی!"
 
 NOTIF_MILESTONE = "🎉 وااای! پلی‌لیست «{playlist}» تو به {count} لایک رسید! 🔥"
 

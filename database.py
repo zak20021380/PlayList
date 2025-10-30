@@ -38,6 +38,7 @@ class Database:
             user.setdefault('premium_plan_id', None)
             user.setdefault('premium_price', 0)
             user.setdefault('active_playlist_id', None)
+            user.setdefault('total_adds', 0)
 
         # Update playlists with new fields
         users = data.get('users', {})
@@ -59,6 +60,12 @@ class Database:
         for song in data.get('songs', {}).values():
             song.setdefault('channel_message_id', None)
             song.setdefault('storage_channel_id', STORAGE_CHANNEL_ID)
+            song.setdefault('likes', [])
+            song.setdefault('original_song_id', song.get('id'))
+            song.setdefault('added_from_playlist_id', None)
+            song.setdefault('added_by', None)
+            song.setdefault('uploader_id', song.get('uploader_id'))
+            song.setdefault('uploader_name', song.get('uploader_name'))
 
         return data
 
@@ -107,6 +114,7 @@ class Database:
             'total_plays': 0,
             'total_likes_received': 0,
             'total_songs_uploaded': 0,
+            'total_adds': 0,
             'notifications_enabled': True,
             'join_date': datetime.now().isoformat(),
             'active_playlist_id': None,
@@ -377,6 +385,12 @@ class Database:
         song_data['playlist_id'] = playlist_id
         song_data['uploaded_at'] = datetime.now().isoformat()
         song_data.setdefault('storage_channel_id', STORAGE_CHANNEL_ID)
+        song_data.setdefault('likes', [])
+        song_data.setdefault('original_song_id', song_id)
+        song_data.setdefault('added_from_playlist_id', None)
+        song_data.setdefault('added_by', str(playlist.get('owner_id')))
+        song_data.setdefault('uploader_id', str(song_data.get('uploader_id') or playlist.get('owner_id')))
+        song_data.setdefault('uploader_name', song_data.get('uploader_name') or playlist.get('owner_name'))
 
         self.data['songs'][song_id] = song_data
         playlist['songs'].append(song_id)
@@ -468,6 +482,142 @@ class Database:
 
         self.save_data()
         return True
+
+    def like_song(self, user_id: int, song_id: str) -> bool:
+        """Register a like for a song"""
+        song = self.data['songs'].get(song_id)
+        user = self.get_user(user_id)
+
+        if not song or not user:
+            return False
+
+        user_id_str = str(user_id)
+        likes = song.setdefault('likes', [])
+
+        if user_id_str in likes:
+            return False
+
+        likes.append(user_id_str)
+
+        uploader_id = song.get('uploader_id')
+        if uploader_id:
+            owner = self.get_user(int(uploader_id))
+            if owner is not None:
+                owner['total_likes_received'] += 1
+
+        self.save_data()
+        return True
+
+    def unlike_song(self, user_id: int, song_id: str) -> bool:
+        """Remove like from a song"""
+        song = self.data['songs'].get(song_id)
+        user = self.get_user(user_id)
+
+        if not song or not user:
+            return False
+
+        user_id_str = str(user_id)
+        likes = song.setdefault('likes', [])
+
+        if user_id_str not in likes:
+            return False
+
+        likes.remove(user_id_str)
+
+        uploader_id = song.get('uploader_id')
+        if uploader_id:
+            owner = self.get_user(int(uploader_id))
+            if owner is not None and owner['total_likes_received'] > 0:
+                owner['total_likes_received'] -= 1
+
+        self.save_data()
+        return True
+
+    def user_has_song_copy(self, user_id: int, original_song_id: str) -> bool:
+        """Check if user already saved a copy of the song"""
+        user = self.get_user(user_id)
+        if not user:
+            return False
+
+        for playlist_id in user.get('playlists', []):
+            playlist = self.get_playlist(playlist_id)
+            if not playlist:
+                continue
+
+            for song_id in playlist.get('songs', []):
+                song = self.data['songs'].get(song_id)
+                if not song:
+                    continue
+                if song.get('original_song_id', song.get('id')) == original_song_id:
+                    return True
+
+        return False
+
+    def add_existing_song_to_playlist(
+        self,
+        source_song_id: str,
+        target_playlist_id: str,
+        actor_id: int,
+    ) -> Tuple[bool, str]:
+        """Clone an existing song into the user's playlist"""
+
+        source_song = self.data['songs'].get(source_song_id)
+        target_playlist = self.get_playlist(target_playlist_id)
+        actor = self.get_user(actor_id)
+
+        if not source_song or not target_playlist or not actor:
+            return False, 'not_found'
+
+        if target_playlist.get('owner_id') != str(actor_id):
+            return False, 'not_owner'
+
+        max_songs = target_playlist.get('max_songs', 0) or 0
+        if max_songs and len(target_playlist.get('songs', [])) >= max_songs:
+            return False, 'playlist_full'
+
+        # Prevent duplicates
+        signature = (
+            source_song.get('storage_channel_id'),
+            source_song.get('channel_message_id'),
+        )
+
+        for existing_song_id in target_playlist.get('songs', []):
+            existing_song = self.data['songs'].get(existing_song_id)
+            if not existing_song:
+                continue
+            existing_signature = (
+                existing_song.get('storage_channel_id'),
+                existing_song.get('channel_message_id'),
+            )
+            if existing_signature == signature:
+                return False, 'duplicate'
+
+        new_song_id = f"song_{len(self.data['songs'])}"
+        cloned_song = {
+            'id': new_song_id,
+            'title': source_song.get('title'),
+            'performer': source_song.get('performer'),
+            'duration': source_song.get('duration'),
+            'file_size': source_song.get('file_size'),
+            'channel_message_id': source_song.get('channel_message_id'),
+            'storage_channel_id': source_song.get('storage_channel_id', STORAGE_CHANNEL_ID),
+            'playlist_id': target_playlist_id,
+            'uploaded_at': datetime.now().isoformat(),
+            'likes': [],
+            'original_song_id': source_song.get('original_song_id', source_song_id),
+            'added_from_playlist_id': source_song.get('playlist_id'),
+            'added_by': str(actor_id),
+            'uploader_id': source_song.get('uploader_id'),
+            'uploader_name': source_song.get('uploader_name'),
+        }
+
+        self.data['songs'][new_song_id] = cloned_song
+        target_playlist.setdefault('songs', []).append(new_song_id)
+
+        actor['total_adds'] += 1
+
+        self.save_data()
+        return True, 'added'
 
     def increment_plays(self, playlist_id: str):
         """Increment play count"""
