@@ -1283,6 +1283,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_playlists = db.get_user_playlists(user_id)
         if not user_playlists:
             await query.answer("اول یه پلی‌لیست بساز!", show_alert=True)
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=NEED_PLAYLIST_BEFORE_ADD,
+            )
             return
 
         context.user_data['pending_song_add'] = {
@@ -1409,6 +1413,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_playlists = db.get_user_playlists(user_id)
         if not user_playlists:
             await query.answer("اول یه پلی‌لیست بساز!")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=NEED_PLAYLIST_BEFORE_ADD,
+            )
             return
 
         buttons = []
