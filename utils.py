@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional, Dict
 
 from config import *
+from texts import BTN_ADD, BTN_LIKE, BTN_LIKED
 
 
 # ===== ZARINPAL PAYMENT =====
@@ -371,12 +372,17 @@ def create_song_buttons(
     *,
     user_liked: bool = False,
     already_added: bool = False,
+    like_count: int = 0,
+    add_count: int = 0,
 ):
     """Create interaction buttons for individual song"""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-    like_label = "💕 لایک شده" if user_liked else "❤️ لایک"
-    add_label = "✅ اضافه شد" if already_added else "➕ اضافه کن"
+    like_base = BTN_LIKED if user_liked else BTN_LIKE
+    like_label = f"{like_base} ({format_number(max(like_count, 0))})"
+
+    add_base = "✅ اضافه شد" if already_added else BTN_ADD
+    add_label = f"{add_base} ({format_number(max(add_count, 0))})"
 
     buttons = [
         [

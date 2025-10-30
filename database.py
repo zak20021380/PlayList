@@ -39,6 +39,7 @@ class Database:
             user.setdefault('premium_price', 0)
             user.setdefault('active_playlist_id', None)
             user.setdefault('total_adds', 0)
+            user.setdefault('added_playlists', [])
 
         # Update playlists with new fields
         users = data.get('users', {})
@@ -103,6 +104,7 @@ class Database:
             'first_name': first_name,
             'playlists': [],
             'liked_playlists': [],
+            'added_playlists': [],
             'following': [],
             'followers': [],
             'badges': [],
@@ -630,8 +632,56 @@ class Database:
 
         actor['total_adds'] += 1
 
+        source_playlist_id = source_song.get('playlist_id')
+        if source_playlist_id:
+            source_playlist = self.get_playlist(source_playlist_id)
+            if source_playlist and source_playlist.get('owner_id') != str(actor_id):
+                added_playlists = actor.setdefault('added_playlists', [])
+                if source_playlist_id not in added_playlists:
+                    added_playlists.append(source_playlist_id)
+
         self.save_data()
         return True, 'added'
+
+    def get_user_added_playlists(self, user_id: int) -> List[Dict]:
+        """Return playlists that user has saved songs from"""
+        user = self.get_user(user_id)
+        if not user:
+            return []
+
+        playlists: List[Dict] = []
+        seen = set()
+
+        for playlist_id in user.get('added_playlists', []):
+            if playlist_id in seen:
+                continue
+
+            playlist = self.get_playlist(playlist_id)
+            if not playlist:
+                continue
+
+            playlists.append(playlist)
+            seen.add(playlist_id)
+
+        return playlists
+
+    def count_song_adds(self, original_song_id: Optional[str]) -> int:
+        """Return number of times a song has been saved to other playlists"""
+        if not original_song_id:
+            return 0
+
+        count = 0
+
+        for song in self.data.get('songs', {}).values():
+            if song.get('original_song_id') != original_song_id:
+                continue
+
+            if song.get('id') == original_song_id:
+                continue
+
+            count += 1
+
+        return count
 
     def increment_plays(self, playlist_id: str):
         """Increment play count"""

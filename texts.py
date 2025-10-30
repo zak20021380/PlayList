@@ -150,6 +150,18 @@ NOTIF_SONG_LIKED_SELF = "❤️ آهنگ «{song}» رو لایک کردی!"
 
 NOTIF_SONG_ADDED_SELF = "➕ آهنگ «{song}» رو به «{playlist}» اضافه کردی!"
 
+ADDED_PLAYLISTS_HEADER = "➕ **پلی‌لیست‌هایی که آهنگاشون رو ذخیره کردی:**\n\n"
+
+ADDED_PLAYLISTS_ITEM = (
+    "{index}. **{name}** — توسط {owner}\n"
+    "   ❤️ {likes} لایک | 🎧 {songs} آهنگ\n\n"
+)
+
+NO_ADDED_PLAYLISTS = (
+    "هنوز از پلی‌لیست‌های بقیه آهنگی ذخیره نکردی! 🤔\n\n"
+    "روی دکمه «➕ اضافه کن» زیر آهنگ‌ها بزن تا اینجا لیست بشن."
+)
+
 NOTIF_MILESTONE = "🎉 وااای! پلی‌لیست «{playlist}» تو به {count} لایک رسید! 🔥"
 
 NOTIF_NEW_FOLLOWER = "🔔 {user} تو رو فالو کرد! 👥"
@@ -165,6 +177,7 @@ PROFILE_TEXT = """
 📊 **آمار:**
 🎵 {playlists_count} پلی‌لیست
 🎧 {songs_count} آهنگ آپلود شده
+➕ {added_playlists_count} پلی‌لیست از بقیه ذخیره کردی
 ❤️ {likes_received} لایک گرفته
 ▶️ {plays_received} پلی شده
 👥 {followers} فالوور | {following} فالو میکنه
@@ -367,6 +380,7 @@ BTN_SETTINGS = "⚙️ تنظیمات"
 BTN_LIKE = "❤️ لایک"
 BTN_LIKED = "💕 لایک شده"
 BTN_ADD = "➕ اضافه کن"
+BTN_ADDED_PLAYLISTS = "➕ پلی لیست های اضافه شده"
 BTN_PLAY = "▶️ پلی"
 BTN_SHARE = "📤 شیر کن"
 
