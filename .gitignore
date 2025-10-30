@@ -1,7 +1,9 @@
-venv/
-.env
 __pycache__/
 *.pyc
-.idea/
+.env
+.venv/
+venv/
+playlist_data.json
 *.log
 .DS_Store
+Capture.PNG
