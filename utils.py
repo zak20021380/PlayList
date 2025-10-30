@@ -27,14 +27,21 @@ class ZarinPal:
             self.verify_url = ZARINPAL_VERIFY_URL
             self.payment_url = ZARINPAL_PAYMENT_URL
 
+    @staticmethod
+    def _to_rial(amount: int) -> int:
+        """Convert toman amount to rial for ZarinPal"""
+        return int(amount * 10)
+
     def create_payment(self, amount: int, description: str, user_id: int) -> Optional[Dict[str, str]]:
         """
         Create payment request
         Returns: dict with payment_url and authority or None
         """
+        rial_amount = self._to_rial(amount)
+
         data = {
             "merchant_id": self.merchant_id,
-            "amount": amount,
+            "amount": rial_amount,
             "description": description,
             "callback_url": f"{ZARINPAL_CALLBACK_URL}?user_id={user_id}",
         }
@@ -60,9 +67,11 @@ class ZarinPal:
         Verify payment after callback
         Returns: True if successful
         """
+        rial_amount = self._to_rial(amount)
+
         data = {
             "merchant_id": self.merchant_id,
-            "amount": amount,
+            "amount": rial_amount,
             "authority": authority
         }
 
