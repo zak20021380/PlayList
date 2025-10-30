@@ -79,6 +79,10 @@ PLAYLIST_DRAFT_PROGRESS = (
 
 PLAYLIST_DELETED = "پلی‌لیست پاک شد 🗑️"
 
+PLAYLIST_NOW_PRIVATE = "پلی‌لیست مخفی شد! 🔒"
+PLAYLIST_NOW_PUBLIC = "پلی‌لیست از حالت مخفی خارج شد! 🌐"
+PLAYLIST_PRIVATE_WARNING = "این پلی‌لیست فعلاً مخفی شده!"
+
 PLAYLIST_LIMIT_REACHED = """
 ⚠️ اوه! به حد مجاز رسیدی!
 
@@ -167,6 +171,16 @@ NO_ADDED_PLAYLISTS = (
     "هنوز از پلی‌لیست‌های بقیه آهنگی ذخیره نکردی! 🤔\n\n"
     "روی دکمه «➕ اضافه کن» زیر آهنگ‌ها بزن تا اینجا لیست بشن."
 )
+
+MANAGE_VISIBILITY_HEADER = """
+👁️ **مدیریت نمایش پلی‌لیست‌ها**
+
+برای هر پلی‌لیست تعیین کن که عمومی باشه یا مخفی. پلی‌لیست‌های مخفی توی جستجو و بخش عمومی نمایش داده نمی‌شن.
+"""
+
+MANAGE_VISIBILITY_ITEM = "{index}. {status_icon} **{name}** — {status}\n"
+
+MANAGE_VISIBILITY_EMPTY = "هنوز پلی‌لیستی نداری که بخوام مدیریت کنم! 😅"
 
 NOTIF_MILESTONE = "🎉 وااای! پلی‌لیست «{playlist}» تو به {count} لایک رسید! 🔥"
 
