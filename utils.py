@@ -92,6 +92,12 @@ def format_number(num: int) -> str:
     return f"{num:,}"
 
 
+def format_percentage(ratio: float, precision: int = 1) -> str:
+    """Format ratio (0-1) as percentage string"""
+    percentage = ratio * 100
+    return f"{percentage:.{precision}f}%"
+
+
 def format_date(iso_date: str) -> str:
     """Format ISO date to Persian readable format"""
     try:
@@ -288,21 +294,28 @@ def is_admin(user_id: int) -> bool:
 def format_admin_stats(stats: Dict) -> str:
     """Format stats for admin panel"""
     return f"""
-📊 **آمار کلی:**
+📊 **داشبورد مدیریت**
 
-👥 کل کاربرها: {format_number(stats['total_users'])}
-✅ فعال امروز: {format_number(stats['active_today'])}
-📈 عضو جدید امروز: {format_number(stats['new_today'])}
+👥 **کاربران**
+• کل کاربران: {format_number(stats['total_users'])}
+• کاربران فعال: {format_number(stats['active_users'])}
+• فعال امروز: {format_number(stats['active_today'])}
+• کاربران جدید امروز: {format_number(stats['new_today'])}
+• کاربران جدید ۷ روز اخیر: {format_number(stats['new_last_week'])}
+• کاربران بن شده: {format_number(stats['banned_users'])}
 
-🎵 کل پلی‌لیست‌ها: {format_number(stats['total_playlists'])}
-🎧 کل آهنگ‌ها: {format_number(stats['total_songs'])}
-❤️ کل لایک‌ها: {format_number(stats['total_likes'])}
-▶️ کل پلی‌ها: {format_number(stats['total_plays'])}
+💎 **پریمیوم**
+• کاربران پریمیوم: {format_number(stats['premium_users'])}
+• سهم از کاربران فعال: {format_percentage(stats.get('premium_ratio', 0))}
+• درآمد کل: {format_number(stats['revenue'])} تومان
 
-💎 کاربران پریمیوم: {format_number(stats['premium_users'])}
-💰 درآمد کل: {format_number(stats['revenue'])} تومان
+🎵 **محتوا**
+• پلی‌لیست‌های منتشر شده: {format_number(stats['total_playlists'])}
+• کل آهنگ‌ها: {format_number(stats['total_songs'])}
+• مجموع لایک‌ها: {format_number(stats['total_likes'])}
+• مجموع پلی‌ها: {format_number(stats['total_plays'])}
 
-📅 {datetime.now().strftime("%Y/%m/%d")}
+📅 بروزرسانی: {datetime.now().strftime("%Y/%m/%d")}
 """
 
 

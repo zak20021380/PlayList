@@ -40,6 +40,7 @@ class Database:
             user.setdefault('active_playlist_id', None)
             user.setdefault('total_adds', 0)
             user.setdefault('added_playlists', [])
+            user.setdefault('last_seen', user.get('join_date', datetime.now().isoformat()))
 
         # Update playlists with new fields
         users = data.get('users', {})
@@ -120,6 +121,7 @@ class Database:
             'total_adds': 0,
             'notifications_enabled': True,
             'join_date': datetime.now().isoformat(),
+            'last_seen': datetime.now().isoformat(),
             'active_playlist_id': None,
         }
 
@@ -138,6 +140,26 @@ class Database:
         if user_id in self.data['users']:
             self.data['users'][user_id].update(updates)
             self.save_data()
+
+    def touch_user(self, user_id: int):
+        """Update user's last seen timestamp"""
+        user = self.get_user(user_id)
+        if not user:
+            return
+
+        now = datetime.now()
+        last_seen_raw = user.get('last_seen')
+
+        try:
+            last_seen_dt = datetime.fromisoformat(last_seen_raw) if last_seen_raw else None
+        except Exception:
+            last_seen_dt = None
+
+        if last_seen_dt and (now - last_seen_dt).total_seconds() < 60:
+            return
+
+        user['last_seen'] = now.isoformat()
+        self.save_data()
 
     def is_premium(self, user_id: int) -> bool:
         """Check if user is premium"""
@@ -989,28 +1011,82 @@ class Database:
             ]
         )
         total_songs = len(self.data['songs'])
-        total_users = len([u for u in self.data['users'].values() if not u.get('banned')])
-        premium_users = len([u for u in self.data['users'].values() if u.get('premium')])
+        users = list(self.data['users'].values())
+        total_users = len(users)
+        banned_users = len([u for u in users if u.get('banned')])
+        active_users = total_users - banned_users
 
-        # Active today
         today = datetime.now().date()
-        active_today = 0  # This would need activity tracking
+        seven_days_ago = today - timedelta(days=6)
 
-        revenue = sum(
-            user.get('premium_price', 0) or 0
-            for user in self.data['users'].values()
-            if user.get('premium')
-        )
+        new_today = 0
+        new_last_week = 0
+        active_today = 0
+        premium_users = 0
+        revenue = 0
+        premium_status_changed = False
+
+        for user in users:
+            if user.get('banned'):
+                continue
+
+            join_date_raw = user.get('join_date')
+            last_seen_raw = user.get('last_seen')
+
+            try:
+                join_date = datetime.fromisoformat(join_date_raw).date() if join_date_raw else None
+            except Exception:
+                join_date = None
+
+            try:
+                last_seen = datetime.fromisoformat(last_seen_raw).date() if last_seen_raw else None
+            except Exception:
+                last_seen = None
+
+            if join_date:
+                if join_date == today:
+                    new_today += 1
+                if join_date >= seven_days_ago:
+                    new_last_week += 1
+
+            if last_seen and last_seen == today:
+                active_today += 1
+
+            if user.get('premium'):
+                premium_until_raw = user.get('premium_until')
+                has_active_premium = True
+
+                if premium_until_raw:
+                    try:
+                        expiry = datetime.fromisoformat(premium_until_raw)
+                        if datetime.now() > expiry:
+                            has_active_premium = False
+                    except Exception:
+                        has_active_premium = False
+
+                if has_active_premium:
+                    premium_users += 1
+                    revenue += user.get('premium_price', 0) or 0
+                else:
+                    user['premium'] = False
+                    premium_status_changed = True
+
+        if premium_status_changed:
+            self.save_data()
 
         return {
             'total_users': total_users,
+            'active_users': active_users,
+            'banned_users': banned_users,
             'active_today': active_today,
-            'new_today': 0,  # Track this separately
+            'new_today': new_today,
+            'new_last_week': new_last_week,
             'total_playlists': total_playlists,
             'total_songs': total_songs,
             'total_likes': self.data['stats']['total_likes'],
             'total_plays': self.data['stats']['total_plays'],
             'premium_users': premium_users,
+            'premium_ratio': (premium_users / active_users) if active_users else 0,
             'revenue': revenue,
         }
 

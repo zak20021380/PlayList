@@ -46,6 +46,7 @@ from admin import (
     admin_plan_duration_value,
     admin_plan_delete_start,
     admin_plan_delete_confirm,
+    admin_stats_callback,
 )
 
 # Logging
@@ -252,8 +253,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db_user = db.get_user(user.id)
     new_user = False
     if not db_user:
-        db.create_user(user.id, user.username, user.first_name)
+        db_user = db.create_user(user.id, user.username, user.first_name)
         new_user = True
+
+    db.touch_user(user.id)
 
     args = context.args if context.args else []
     send_welcome = new_user or not args
@@ -1161,6 +1164,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = update.effective_user.id
 
+    db.touch_user(user_id)
+
     # Browse menus
     if data == 'browse_menu':
         context.user_data.pop('awaiting_search', None)
@@ -1727,6 +1732,10 @@ async def admin_stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle main menu button presses"""
+    user_id = update.effective_user.id if update.effective_user else None
+    if user_id:
+        db.touch_user(user_id)
+
     text = update.message.text
 
     if context.user_data.get('awaiting_search'):
@@ -1863,6 +1872,7 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_edit_plan_menu, pattern='^admin_edit_plan_'))
     application.add_handler(CallbackQueryHandler(admin_plan_delete_start, pattern='^admin_plan_delete_.+$'))
     application.add_handler(CallbackQueryHandler(admin_plan_delete_confirm, pattern='^admin_plan_delete_confirm_.+$'))
+    application.add_handler(CallbackQueryHandler(admin_stats_callback, pattern='^admin_stats$'))
 
     # Audio handler
     application.add_handler(MessageHandler(filters.AUDIO, handle_audio))
