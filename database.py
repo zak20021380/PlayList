@@ -6,7 +6,7 @@ import json
 import os
 import uuid
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from config import *
 from utils import calculate_score
@@ -887,6 +887,92 @@ class Database:
 
         self.save_data()
         return True, 'added'
+
+    def remove_song_from_playlist(
+        self,
+        playlist_id: str,
+        song_id: str,
+        actor_id: int,
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """Remove a song from a playlist if the actor owns it"""
+
+        playlist = self.get_playlist(playlist_id)
+        if not playlist:
+            return False, {'status': 'playlist_not_found'}
+
+        if playlist.get('owner_id') != str(actor_id):
+            return False, {'status': 'not_owner'}
+
+        if song_id not in playlist.get('songs', []):
+            return False, {'status': 'song_not_in_playlist'}
+
+        song = self.data['songs'].get(song_id)
+        storage_messages: List[Tuple[int, int]] = []
+
+        if song:
+            channel_message_id = song.get('channel_message_id')
+            storage_channel_id = song.get('storage_channel_id', STORAGE_CHANNEL_ID)
+
+            if (
+                channel_message_id
+                and self._is_channel_message_unique(song_id, storage_channel_id, channel_message_id)
+            ):
+                channel_id_int = int(storage_channel_id) if storage_channel_id is not None else STORAGE_CHANNEL_ID
+                storage_messages.append((channel_id_int, int(channel_message_id)))
+
+        playlist['songs'] = [sid for sid in playlist.get('songs', []) if sid != song_id]
+
+        actor = self.get_user(actor_id)
+        if actor and song:
+            added_from_playlist_id = song.get('added_from_playlist_id')
+            added_by = song.get('added_by')
+
+            if added_from_playlist_id and added_by == str(actor_id):
+                actor['total_adds'] = max(0, actor.get('total_adds', 0) - 1)
+
+                still_has_copy = False
+                for owned_playlist_id in actor.get('playlists', []):
+                    owned_playlist = self.get_playlist(owned_playlist_id)
+                    if not owned_playlist:
+                        continue
+
+                    for owned_song_id in owned_playlist.get('songs', []):
+                        owned_song = self.data['songs'].get(owned_song_id)
+                        if owned_song and owned_song.get('added_from_playlist_id') == added_from_playlist_id:
+                            still_has_copy = True
+                            break
+
+                    if still_has_copy:
+                        break
+
+                if not still_has_copy:
+                    added_playlists = actor.setdefault('added_playlists', [])
+                    if added_from_playlist_id in added_playlists:
+                        added_playlists.remove(added_from_playlist_id)
+            elif added_by == str(actor_id):
+                actor['total_songs_uploaded'] = max(0, actor.get('total_songs_uploaded', 0) - 1)
+
+        playlist_was_published = playlist.get('status') == 'published'
+        remaining_songs = len(playlist.get('songs', []))
+        playlist_now_draft = False
+
+        if playlist_was_published and remaining_songs < MIN_SONGS_TO_PUBLISH:
+            playlist['status'] = 'draft'
+            playlist['published_at'] = None
+            playlist_now_draft = True
+
+        if song_id in self.data['songs']:
+            del self.data['songs'][song_id]
+
+        self.save_data()
+
+        return True, {
+            'status': 'removed',
+            'storage_messages': storage_messages,
+            'playlist_now_draft': playlist_now_draft,
+            'remaining_songs': remaining_songs,
+            'max_songs': playlist.get('max_songs', 0) or 0,
+        }
 
     def get_user_added_playlists(self, user_id: int) -> List[Dict]:
         """Return playlists that user has saved songs from"""

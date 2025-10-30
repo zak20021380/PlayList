@@ -263,6 +263,31 @@ async def send_playlist_details(
 
     songs_text = "\n".join(songs_info_lines) if songs_info_lines else "هیچ آهنگی برای نمایش موجود نیست."
 
+    is_owner = playlist.get('owner_id') == str(user_id)
+    max_songs = playlist.get('max_songs', 0) or 0
+    current_count = len(playlist.get('songs', []))
+    owner_lines = []
+
+    if is_owner:
+        current_display = format_number(current_count)
+        maximum_display = "∞" if not max_songs else format_number(max_songs)
+        owner_lines.append(
+            PLAYLIST_CAPACITY_STATUS.format(
+                current=current_display,
+                maximum=maximum_display,
+            )
+        )
+
+        if max_songs and current_count >= max_songs:
+            owner_lines.append(
+                PLAYLIST_OWNER_FULL_HINT.format(
+                    current=current_display,
+                    maximum=maximum_display,
+                )
+            )
+        else:
+            owner_lines.append(PLAYLIST_OWNER_ADD_HINT)
+
     playlist_summary = (
         f"🎧 **{escape_markdown(playlist['name'])}**\n"
         f"📂 دسته‌بندی: {escape_markdown(mood_label)}\n"
@@ -270,10 +295,25 @@ async def send_playlist_details(
         f"{songs_text}"
     )
 
+    if owner_lines:
+        playlist_summary += "\n\n" + "\n".join(owner_lines)
+
+    summary_reply_markup = None
+    if is_owner and (not max_songs or current_count < max_songs) and playlist_identifier:
+        summary_reply_markup = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "➕ افزودن آهنگ جدید",
+                    callback_data=f"set_active_add:{playlist_identifier}",
+                )
+            ]
+        ])
+
     await context.bot.send_message(
         chat_id=user_id,
         text=playlist_summary,
         parse_mode=ParseMode.MARKDOWN,
+        reply_markup=summary_reply_markup,
     )
 
     if playlist.get('songs') and playlist_identifier:
@@ -290,6 +330,7 @@ async def send_playlist_details(
             already_added = db.user_has_song_copy(user_id, original_id)
             like_count = len(song.get('likes', []))
             add_count = db.count_song_adds(original_id)
+            can_remove = is_owner
 
             try:
                 channel_message_id = song.get('channel_message_id')
@@ -308,6 +349,7 @@ async def send_playlist_details(
                             already_added=already_added,
                             like_count=like_count,
                             add_count=add_count,
+                            can_remove=can_remove,
                         ),
                     )
                 elif song.get('file_id'):
@@ -323,6 +365,7 @@ async def send_playlist_details(
                             already_added=already_added,
                             like_count=like_count,
                             add_count=add_count,
+                            can_remove=can_remove,
                         ),
                     )
                 else:
@@ -1493,6 +1536,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(ERROR_NOT_FOUND, show_alert=True)
             return
 
+        playlist = db.get_playlist(playlist_id)
+        is_owner = playlist is not None and playlist.get('owner_id') == str(user_id)
+
         if str(user_id) in song.get('likes', []):
             db.unlike_song(user_id, song_id)
             await query.answer(UNLIKED)
@@ -1533,6 +1579,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     already_added=already_added,
                     like_count=like_count,
                     add_count=add_count,
+                    can_remove=is_owner,
                 )
             )
         except BadRequest as exc:
@@ -1691,6 +1738,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         original_id = original_song.get('original_song_id', song_id)
         like_count = len(original_song.get('likes', []))
         add_count = db.count_song_adds(original_id)
+        source_playlist = db.get_playlist(pending['source_playlist_id']) if pending.get('source_playlist_id') else None
+        can_remove_source = source_playlist is not None and source_playlist.get('owner_id') == str(user_id)
+
         try:
             await context.bot.edit_message_reply_markup(
                 chat_id=user_id,
@@ -1702,12 +1752,100 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     already_added=True,
                     like_count=like_count,
                     add_count=add_count,
+                    can_remove=can_remove_source,
                 ),
             )
         except Exception as exc:
             logger.error(f"Failed to update song buttons after add: {exc}")
 
         context.user_data.pop('pending_song_add', None)
+
+    elif data.startswith('remove_song:'):
+        try:
+            _, playlist_id, song_id = data.split(':', 2)
+        except ValueError:
+            await query.answer(ERROR_GENERAL, show_alert=True)
+            return
+
+        playlist = db.get_playlist(playlist_id)
+        playlist_name = playlist.get('name', 'پلی‌لیست') if playlist else 'پلی‌لیست'
+
+        success, info = db.remove_song_from_playlist(playlist_id, song_id, user_id)
+
+        if not success:
+            status = info.get('status') if isinstance(info, dict) else None
+            if status == 'not_owner':
+                await query.answer(SONG_REMOVE_NOT_OWNER, show_alert=True)
+            elif status in {'playlist_not_found', 'song_not_in_playlist'}:
+                await query.answer(SONG_REMOVE_NOT_FOUND, show_alert=True)
+            else:
+                await query.answer(ERROR_GENERAL, show_alert=True)
+            return
+
+        storage_messages = info.get('storage_messages', []) if isinstance(info, dict) else []
+        for channel_id, message_id in storage_messages:
+            try:
+                await context.bot.delete_message(chat_id=channel_id, message_id=message_id)
+            except BadRequest as exc:
+                logger.warning(
+                    "BadRequest while deleting song %s from channel %s: %s",
+                    song_id,
+                    channel_id,
+                    exc,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Unexpected error deleting song %s from channel %s: %s",
+                    song_id,
+                    channel_id,
+                    exc,
+                )
+
+        try:
+            await query.message.delete()
+        except BadRequest as exc:
+            logger.debug("Failed to delete song message after removal: %s", exc)
+        except Exception as exc:
+            logger.error("Unexpected error deleting song message: %s", exc)
+
+        await query.answer("آهنگ حذف شد!", show_alert=True)
+
+        updated_playlist = db.get_playlist(playlist_id)
+        playlist_display_name = playlist_name
+        if updated_playlist:
+            playlist_display_name = updated_playlist.get('name', playlist_name)
+
+        remaining = info.get('remaining_songs', 0)
+        max_songs = info.get('max_songs', 0)
+        current_display = format_number(remaining)
+        maximum_display = "∞" if not max_songs else format_number(max_songs)
+
+        messages = [
+            SONG_REMOVED_SUCCESS.format(playlist=playlist_display_name)
+        ]
+        messages.append(
+            PLAYLIST_CAPACITY_STATUS.format(
+                current=current_display,
+                maximum=maximum_display,
+            )
+        )
+
+        if not max_songs or remaining < max_songs:
+            messages.append(PLAYLIST_OWNER_ADD_HINT)
+
+        if info.get('playlist_now_draft'):
+            messages.append(
+                PLAYLIST_OWNER_NOW_DRAFT.format(
+                    min_songs=MIN_SONGS_TO_PUBLISH,
+                )
+            )
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="\n".join(messages),
+        )
+
+        return
 
     # Add to playlist
     elif data.startswith('add_'):
@@ -1770,6 +1908,50 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("این پلی‌لیست خالیه!")
 
         await send_playlist_details(user_id, playlist, context, playlist_id)
+
+    elif data.startswith('set_active_add:'):
+        playlist_id = data.replace('set_active_add:', '')
+        playlist = db.get_playlist(playlist_id)
+
+        if not playlist or playlist.get('owner_id') != str(user_id):
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
+            return
+
+        max_songs = playlist.get('max_songs', 0) or 0
+        current_count = len(playlist.get('songs', []))
+        if max_songs and current_count >= max_songs:
+            await query.answer(
+                PLAYLIST_FULL.format(max_songs=max_songs),
+                show_alert=True,
+            )
+            return
+
+        user = db.get_user(user_id)
+        current_active = user.get('active_playlist_id') if user else None
+        if current_active == playlist_id:
+            await query.answer(PLAYLIST_ALREADY_ACTIVE, show_alert=True)
+            return
+
+        db.set_active_playlist(user_id, playlist_id)
+        await query.answer("پلی‌لیست فعال شد!", show_alert=False)
+
+        current_display = format_number(current_count)
+        maximum_display = "∞" if not max_songs else format_number(max_songs)
+        message_lines = [
+            PLAYLIST_ACTIVATED_FOR_UPLOAD.format(name=playlist.get('name', 'پلی‌لیست')),
+            PLAYLIST_CAPACITY_STATUS.format(
+                current=current_display,
+                maximum=maximum_display,
+            ),
+        ]
+
+        if not max_songs or current_count < max_songs:
+            message_lines.append(PLAYLIST_OWNER_ADD_HINT)
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="\n".join(message_lines),
+        )
 
     elif data.startswith('toggle_visibility_'):
         playlist_id = data.replace('toggle_visibility_', '', 1)

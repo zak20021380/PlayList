@@ -387,6 +387,7 @@ def create_song_buttons(
     already_added: bool = False,
     like_count: int = 0,
     add_count: int = 0,
+    can_remove: bool = False,
 ):
     """Create interaction buttons for individual song"""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -409,6 +410,14 @@ def create_song_buttons(
             ),
         ]
     ]
+
+    if can_remove:
+        buttons.append([
+            InlineKeyboardButton(
+                "🗑️ حذف از پلی‌لیست",
+                callback_data=f"remove_song:{playlist_id}:{song_id}",
+            )
+        ])
 
     return InlineKeyboardMarkup(buttons)
 
