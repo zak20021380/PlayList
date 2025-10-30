@@ -2140,7 +2140,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             buttons = [
                 [InlineKeyboardButton("💳 پرداخت", url=payment_data['payment_url'])],
-                [InlineKeyboardButton("✅ پرداخت کردم", callback_data="verify_payment")],
                 [InlineKeyboardButton("🔙 پلن‌های دیگر", callback_data="buy_premium")],
             ]
 
