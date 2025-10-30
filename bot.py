@@ -461,6 +461,9 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = pl.get('status', 'published')
         status_icon = '✅' if status == 'published' else '📝'
         status_text = 'منتشر شده' if status == 'published' else 'پیش‌نویس'
+        is_private = pl.get('is_private', False)
+        visibility_icon = '🔒' if is_private else '🌐'
+        visibility_text = 'مخفی' if is_private else 'عمومی'
         max_songs = pl.get('max_songs', 0) or 0
 
         if max_songs and max_songs < PREMIUM_SONGS_PER_PLAYLIST:
@@ -474,6 +477,7 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message += f"{status_icon} {mood} **{name}** — {status_text}\n"
         message += f"   🎧 {count_display} | ❤️ {likes_count} لایک\n"
+        message += f"   {visibility_icon} وضعیت: {visibility_text}\n"
 
         if status != 'published':
             remaining = max(MIN_SONGS_TO_PUBLISH - songs_count, 0)
@@ -507,6 +511,57 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_response(
         update,
         message,
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def manage_playlist_visibility(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Allow user to toggle visibility of their playlists"""
+    user_id = update.effective_user.id
+    playlists = db.get_user_playlists(user_id)
+
+    if not playlists:
+        await send_response(
+            update,
+            MANAGE_VISIBILITY_EMPTY,
+            parse_mode=None,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_profile")]
+            ]),
+        )
+        return
+
+    message_lines = [MANAGE_VISIBILITY_HEADER.strip(), ""]
+    buttons = []
+
+    for index, playlist in enumerate(playlists, 1):
+        name = escape_markdown(playlist.get('name', 'پلی‌لیست'))
+        is_private = playlist.get('is_private', False)
+        status_icon = '🔒' if is_private else '🌐'
+        status_text = 'مخفی' if is_private else 'عمومی'
+
+        message_lines.append(
+            MANAGE_VISIBILITY_ITEM.format(
+                index=index,
+                status_icon=status_icon,
+                name=name,
+                status=status_text,
+            )
+        )
+
+        toggle_label = '🔓 عمومی کن' if is_private else '🔒 مخفی کن'
+        buttons.append([
+            InlineKeyboardButton(
+                f"{toggle_label} — {playlist.get('name', 'پلی‌لیست')}",
+                callback_data=f"toggle_visibility_{playlist['id']}"
+            )
+        ])
+
+    buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_profile")])
+
+    await send_response(
+        update,
+        "\n".join(message_lines),
         reply_markup=InlineKeyboardMarkup(buttons),
     )
 
@@ -798,6 +853,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     buttons = [
         [InlineKeyboardButton("🎵 پلی‌لیست‌هام", callback_data="my_playlists")],
+        [InlineKeyboardButton("👁️ مدیریت نمایش", callback_data="manage_visibility")],
         [InlineKeyboardButton(BTN_ADDED_PLAYLISTS, callback_data="added_playlists")],
         [InlineKeyboardButton("📊 آمار کامل", callback_data="my_stats")],
     ]
@@ -1145,6 +1201,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
             await query.answer(PLAYLIST_NOT_PUBLISHED, show_alert=True)
             return
+        if playlist.get('is_private') and playlist.get('owner_id') != str(user_id):
+            await query.answer(PLAYLIST_PRIVATE_WARNING, show_alert=True)
+            return
 
         share_url = build_playlist_share_url(playlist_id, playlist.get('name', ''))
         if not share_url:
@@ -1445,6 +1504,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
             await query.answer(PLAYLIST_NOT_PUBLISHED)
             return
+        if playlist.get('is_private') and playlist.get('owner_id') != str(user_id):
+            await query.answer(PLAYLIST_PRIVATE_WARNING, show_alert=True)
+            return
 
         if playlist.get('songs'):
             await query.answer(f"در حال پخش {playlist['name']}...")
@@ -1452,6 +1514,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("این پلی‌لیست خالیه!")
 
         await send_playlist_details(user_id, playlist, context, playlist_id)
+
+    elif data.startswith('toggle_visibility_'):
+        playlist_id = data.replace('toggle_visibility_', '', 1)
+        new_state = db.toggle_playlist_visibility(user_id, playlist_id)
+
+        if new_state is None:
+            await query.answer(ERROR_GENERAL, show_alert=True)
+            return
+
+        if new_state:
+            await query.answer(PLAYLIST_NOW_PRIVATE)
+        else:
+            await query.answer(PLAYLIST_NOW_PUBLIC)
+
+        await manage_playlist_visibility(update, context)
 
     # User quick actions
     elif data == 'my_playlists':
@@ -1462,6 +1539,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == 'premium':
         await premium_info(update, context)
+
+    elif data == 'manage_visibility':
+        await manage_playlist_visibility(update, context)
 
     # Delete playlist
     elif data.startswith('delete_'):

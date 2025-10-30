@@ -53,6 +53,7 @@ class Database:
             )
             playlist.setdefault('max_songs', default_limit)
             playlist.setdefault('published_at', None)
+            playlist.setdefault('is_private', False)
             if status not in ('draft', 'published'):
                 playlist['status'] = 'draft'
             if playlist['status'] == 'draft' and len(playlist.get('songs', [])) >= MIN_SONGS_TO_PUBLISH:
@@ -374,6 +375,27 @@ class Database:
                 drafts.append(playlist)
 
         return drafts + published
+
+    def set_playlist_visibility(self, user_id: int, playlist_id: str, is_private: bool) -> bool:
+        """Update playlist visibility if the requesting user is the owner"""
+        playlist = self.get_playlist(playlist_id)
+        if not playlist or playlist.get('owner_id') != str(user_id):
+            return False
+
+        playlist['is_private'] = bool(is_private)
+        self.save_data()
+        return True
+
+    def toggle_playlist_visibility(self, user_id: int, playlist_id: str) -> Optional[bool]:
+        """Toggle playlist visibility and return the new state"""
+        playlist = self.get_playlist(playlist_id)
+        if not playlist or playlist.get('owner_id') != str(user_id):
+            return None
+
+        new_state = not playlist.get('is_private', False)
+        playlist['is_private'] = new_state
+        self.save_data()
+        return new_state
 
     def _find_fallback_playlist_id(self, user_id: int) -> Optional[str]:
         """Return the most recent playlist id for user"""
