@@ -2,6 +2,7 @@
 # فایل اصلی ربات
 
 import logging
+from datetime import datetime, time as datetime_time
 from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -235,6 +236,131 @@ async def send_playlist_details(
                 await asyncio.sleep(0.5)
             except Exception as e:
                 logger.error(f"Failed to send audio: {e}")
+
+
+async def send_daily_top_song(context: ContextTypes.DEFAULT_TYPE):
+    """Send the most liked song of the day to all users at 22:00"""
+    target_date = datetime.now().strftime('%Y-%m-%d')
+
+    if db.get_last_top_song_broadcast() == target_date:
+        return
+
+    song, daily_likes = db.get_top_song_of_day(target_date)
+
+    if not song or daily_likes <= 0:
+        return
+
+    song_title = escape_markdown(song.get('title') or 'آهنگ')
+    performer = escape_markdown(song.get('performer') or 'نامشخص')
+    total_likes = len(song.get('likes', []))
+    caption_lines = [
+        "🌟 *آهنگ محبوب امروز*",
+        "این آهنگ امروز بیشترین طرفدار رو داشت! ❤️",
+        "",
+        f"🎵 {song_title}",
+        f"👤 {performer}",
+        f"❤️ لایک‌های امروز: {daily_likes}",
+        f"❤️ کل لایک‌ها: {total_likes}",
+    ]
+    caption = "\n".join(caption_lines)
+
+    song_id = song.get('id') or song.get('original_song_id')
+    channel_message_id = song.get('channel_message_id')
+    storage_channel_id = song.get('storage_channel_id', STORAGE_CHANNEL_ID)
+    original_song_id = song.get('original_song_id', song_id)
+    add_count = db.count_song_adds(original_song_id)
+    song_likes = set(song.get('likes', []))
+    total_song_likes = len(song_likes)
+
+    owner_raw = song.get('uploader_id')
+    try:
+        owner_id = int(owner_raw) if owner_raw is not None else None
+    except (TypeError, ValueError):
+        owner_id = None
+
+    recipients = db.data.get('users', {}).values()
+
+    for user in recipients:
+        if user.get('banned'):
+            continue
+
+        try:
+            user_id = int(user['user_id'])
+        except (TypeError, ValueError):
+            continue
+
+        if owner_id and user_id == owner_id:
+            continue
+
+        if not should_send_notification(user_id, db):
+            continue
+
+        user_liked = str(user_id) in song_likes
+        already_added = db.user_has_song_copy(user_id, original_song_id)
+
+        try:
+            if channel_message_id and storage_channel_id:
+                await context.bot.copy_message(
+                    chat_id=user_id,
+                    from_chat_id=storage_channel_id,
+                    message_id=channel_message_id,
+                    caption=caption,
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=create_song_buttons(
+                        song_id,
+                        'daily_top',
+                        user_liked=user_liked,
+                        already_added=already_added,
+                        like_count=total_song_likes,
+                        add_count=add_count,
+                    ),
+                )
+            elif song.get('file_id'):
+                await context.bot.send_audio(
+                    chat_id=user_id,
+                    audio=song['file_id'],
+                    caption=caption,
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=create_song_buttons(
+                        song_id,
+                        'daily_top',
+                        user_liked=user_liked,
+                        already_added=already_added,
+                        like_count=total_song_likes,
+                        add_count=add_count,
+                    ),
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=caption,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+            await asyncio.sleep(NOTIFICATION_DELAY)
+        except Exception as exc:
+            logger.error("Failed to send daily top song to %s: %s", user_id, exc)
+
+    if owner_id:
+        owner = db.get_user(owner_id)
+        if owner and not owner.get('banned'):
+            owner_name = escape_markdown(owner.get('first_name') or 'دوست عزیز')
+            owner_message = (
+                f"🎉 *تبریک {owner_name}!*\n"
+                f"آهنگ «{song_title}» امشب بیشترین لایک رو داشت. ❤️\n"
+                f"تعداد لایک‌های امروز: {daily_likes}"
+            )
+
+            try:
+                await context.bot.send_message(
+                    chat_id=owner_id,
+                    text=owner_message,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            except Exception as exc:
+                logger.error("Failed to notify owner %s about daily top song: %s", owner_id, exc)
+
+    db.set_last_top_song_broadcast(target_date)
 
 # ===== COMMAND HANDLERS =====
 
@@ -1885,6 +2011,13 @@ def main():
         filters.TEXT & ~filters.COMMAND,
         handle_main_menu
     ))
+
+    if application.job_queue:
+        application.job_queue.run_daily(
+            send_daily_top_song,
+            time=datetime_time(hour=22, minute=0),
+            name='daily_top_song',
+        )
 
     # Start bot
     print("🎵 پلی‌لیست ربات راه‌اندازی شد! 🚀")
