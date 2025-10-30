@@ -2,6 +2,8 @@
 # فایل اصلی ربات
 
 import logging
+from typing import Optional
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -103,28 +105,152 @@ async def send_notification(user_id: int, message: str, context: ContextTypes.DE
             logger.error(f"Failed to send notification to {user_id}: {e}")
 
 
+async def send_playlist_details(
+    user_id: int,
+    playlist: dict,
+    context: ContextTypes.DEFAULT_TYPE,
+    playlist_id: Optional[str] = None,
+):
+    """Send playlist summary and songs to a user"""
+    playlist_identifier = playlist_id or playlist.get('id')
+
+    mood_label = DEFAULT_MOODS.get(
+        playlist.get('mood', 'happy'),
+        playlist.get('mood', 'نامشخص'),
+    )
+
+    songs_info_lines = []
+
+    for index, song_id in enumerate(playlist.get('songs', []), 1):
+        song = db.data['songs'].get(song_id)
+        if not song:
+            continue
+
+        title = song.get('title') or 'بدون عنوان'
+        performer = song.get('performer') or ''
+        duration = format_duration(song.get('duration', 0))
+
+        title_md = escape_markdown(str(title))
+        performer_md = escape_markdown(str(performer)) if performer and performer.lower() != 'unknown' else ''
+
+        if performer_md:
+            songs_info_lines.append(f"{index}. {title_md} — {performer_md} ({duration})")
+        else:
+            songs_info_lines.append(f"{index}. {title_md} ({duration})")
+
+    songs_text = "\n".join(songs_info_lines) if songs_info_lines else "هیچ آهنگی برای نمایش موجود نیست."
+
+    playlist_summary = (
+        f"🎧 **{escape_markdown(playlist['name'])}**\n"
+        f"📂 دسته‌بندی: {escape_markdown(mood_label)}\n"
+        f"🎵 تعداد آهنگ‌ها: {len(playlist.get('songs', []))}\n\n"
+        f"{songs_text}"
+    )
+
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=playlist_summary,
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    if playlist.get('songs') and playlist_identifier:
+        db.increment_plays(playlist_identifier)
+
+        for song_id in playlist['songs']:
+            song = db.data['songs'].get(song_id)
+            if not song:
+                continue
+
+            caption = get_song_info(song)
+            original_id = song.get('original_song_id', song_id)
+            user_liked = str(user_id) in song.get('likes', [])
+            already_added = db.user_has_song_copy(user_id, original_id)
+
+            try:
+                channel_message_id = song.get('channel_message_id')
+                storage_channel_id = song.get('storage_channel_id', STORAGE_CHANNEL_ID)
+                if channel_message_id and storage_channel_id:
+                    await context.bot.copy_message(
+                        chat_id=user_id,
+                        from_chat_id=storage_channel_id,
+                        message_id=channel_message_id,
+                        caption=caption,
+                        parse_mode=ParseMode.MARKDOWN,
+                        reply_markup=create_song_buttons(
+                            song_id,
+                            playlist_identifier,
+                            user_liked=user_liked,
+                            already_added=already_added,
+                        ),
+                    )
+                elif song.get('file_id'):
+                    await context.bot.send_audio(
+                        chat_id=user_id,
+                        audio=song['file_id'],
+                        caption=caption,
+                        parse_mode=ParseMode.MARKDOWN,
+                        reply_markup=create_song_buttons(
+                            song_id,
+                            playlist_identifier,
+                            user_liked=user_liked,
+                            already_added=already_added,
+                        ),
+                    )
+                else:
+                    raise ValueError('Missing song storage reference')
+
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Failed to send audio: {e}")
+
 # ===== COMMAND HANDLERS =====
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command"""
     user = update.effective_user
+    message = update.effective_message
 
     # Check if banned
     if db.is_banned(user.id):
-        await update.message.reply_text(ERROR_USER_BANNED)
+        if message:
+            await message.reply_text(ERROR_USER_BANNED)
         return
 
     # Create or get user
     db_user = db.get_user(user.id)
+    new_user = False
     if not db_user:
         db.create_user(user.id, user.username, user.first_name)
+        new_user = True
 
-    # Send welcome message
-    await update.message.reply_text(
-        WELCOME,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup={"keyboard": get_main_keyboard(), "resize_keyboard": True}
-    )
+    args = context.args if context.args else []
+    send_welcome = new_user or not args
+
+    if send_welcome and message:
+        await message.reply_text(
+            WELCOME,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup={"keyboard": get_main_keyboard(), "resize_keyboard": True}
+        )
+
+    if args:
+        payload = args[0]
+        if payload.startswith('pl_'):
+            playlist_id = payload.replace('pl_', '', 1)
+            playlist = db.get_playlist(playlist_id)
+
+            if not playlist:
+                if message:
+                    await message.reply_text(ERROR_NOT_FOUND)
+                return
+
+            if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user.id):
+                if message:
+                    await message.reply_text(PLAYLIST_NOT_PUBLISHED)
+                return
+
+            await send_playlist_details(user.id, playlist, context, playlist_id)
+            return
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -200,19 +326,27 @@ async def new_playlist_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             max_songs = FREE_SONGS_PER_PLAYLIST
 
+        if MIN_SONGS_TO_PUBLISH <= 1:
+            publish_line = "همین که اولین آهنگ رو بفرستی پلی‌لیست منتشر میشه؛ لازم نیست همه آهنگ‌ها رو یکجا بفرستی."
+        else:
+            publish_line = (
+                f"بعد از {MIN_SONGS_TO_PUBLISH} آهنگ منتشر میشه؛ لازم نیست همه آهنگ‌ها رو یکجا بفرستی."
+            )
+
         if is_premium:
             message = (
                 base_message
                 + "\n\n"
                 + "فقط فایل صوتی بفرست؛ اگه اسم پلی‌لیست رو تو کپشن هم بنویسی سریع‌تر می‌فهمم!"
-                + f"\nبا {MIN_SONGS_TO_PUBLISH} آهنگ منتشر میشه و بعدش هرچقدر خواستی آهنگ اضافه کن!"
+                + f"\n{publish_line}\nبعداً هر زمان خواستی آهنگ‌های بیشتری اضافه کن."
             )
         else:
             message = (
                 f"{base_message}\n"
                 + PLAYLIST_CREATED_FREE.format(max_songs=max_songs)
-                + "\n\nفقط فایل صوتی بفرست؛ اگر اسم پلی‌لیست رو تو کپشن بنویسی کارم راحت‌تر میشه."
-                + f"\nبعد از {MIN_SONGS_TO_PUBLISH} آهنگ منتشر میشه و ظرفیتش تکمیل میشه."
+                + "\n\n"
+                + "فقط فایل صوتی بفرست؛ اگر اسم پلی‌لیست رو تو کپشن بنویسی کارم راحت‌تر میشه."
+                + f"\n{publish_line}\nظرفیتت تا {max_songs} آهنگ بازه و میتونی هر وقت خواستی ادامه بدی."
             )
 
         await query.edit_message_text(
@@ -273,6 +407,8 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message += "\n"
 
+        share_url = build_playlist_share_url(pl['id'], pl['name'])
+
         buttons.append([
             InlineKeyboardButton(
                 f"▶️ {pl['name']}",
@@ -283,6 +419,14 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data=f"delete_{pl['id']}"
             )
         ])
+
+        if share_url:
+            buttons.append([
+                InlineKeyboardButton(
+                    "🔗 اشتراک‌گذاری",
+                    url=share_url,
+                )
+            ])
 
     await send_response(
         update,
@@ -849,7 +993,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
-            await query.answer("این پلی‌لیست هنوز منتشر نشده!")
+            await query.answer(PLAYLIST_NOT_PUBLISHED)
             return
 
         # Check if already liked
@@ -931,8 +1075,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         playlist_id = data.replace('add_', '')
         playlist = db.get_playlist(playlist_id)
 
-        if not playlist or (playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id)):
-            await query.answer("این پلی‌لیست هنوز منتشر نشده!")
+        if not playlist:
+            await query.answer(ERROR_NOT_FOUND)
+            return
+
+        if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
+            await query.answer(PLAYLIST_NOT_PUBLISHED)
             return
 
         context.user_data['adding_from'] = playlist_id
@@ -1080,104 +1228,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         playlist = db.get_playlist(playlist_id)
 
         if not playlist:
-            await query.answer("این پلی‌لیست پیدا نشد!")
+            await query.answer(ERROR_NOT_FOUND)
             return
 
         if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
-            await query.answer("این پلی‌لیست هنوز منتشر نشده!")
+            await query.answer(PLAYLIST_NOT_PUBLISHED)
             return
 
-        if not playlist['songs']:
+        if playlist.get('songs'):
+            await query.answer(f"در حال پخش {playlist['name']}...")
+        else:
             await query.answer("این پلی‌لیست خالیه!")
 
-        # Send playlist info before songs
-        mood_label = DEFAULT_MOODS.get(playlist.get('mood', 'happy'), playlist.get('mood', 'نامشخص'))
-        songs_info_lines = []
-
-        for index, song_id in enumerate(playlist['songs'], 1):
-            song = db.data['songs'].get(song_id)
-            if not song:
-                continue
-
-            title = song.get('title') or 'بدون عنوان'
-            performer = song.get('performer') or ''
-            duration = format_duration(song.get('duration', 0))
-
-            title_md = escape_markdown(str(title))
-            performer_md = escape_markdown(str(performer)) if performer and performer.lower() != 'unknown' else ''
-
-            if performer_md:
-                songs_info_lines.append(f"{index}. {title_md} — {performer_md} ({duration})")
-            else:
-                songs_info_lines.append(f"{index}. {title_md} ({duration})")
-
-        if songs_info_lines:
-            songs_text = "\n".join(songs_info_lines)
-        else:
-            songs_text = "هیچ آهنگی برای نمایش موجود نیست."
-
-        playlist_summary = (
-            f"🎧 **{escape_markdown(playlist['name'])}**\n"
-            f"📂 دسته‌بندی: {escape_markdown(mood_label)}\n"
-            f"🎵 تعداد آهنگ‌ها: {len(playlist['songs'])}\n\n"
-            f"{songs_text}"
-        )
-
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=playlist_summary,
-            parse_mode=ParseMode.MARKDOWN,
-        )
-
-        if playlist['songs']:
-            # Increment plays
-            db.increment_plays(playlist_id)
-
-            # Send all songs
-            await query.answer(f"در حال پخش {playlist['name']}...")
-
-            for song_id in playlist['songs']:
-                song = db.data['songs'].get(song_id)
-                if song:
-                    caption = get_song_info(song)
-                    original_id = song.get('original_song_id', song_id)
-                    user_liked = str(user_id) in song.get('likes', [])
-                    already_added = db.user_has_song_copy(user_id, original_id)
-                    try:
-                        channel_message_id = song.get('channel_message_id')
-                        storage_channel_id = song.get('storage_channel_id', STORAGE_CHANNEL_ID)
-                        if channel_message_id and storage_channel_id:
-                            await context.bot.copy_message(
-                                chat_id=user_id,
-                                from_chat_id=storage_channel_id,
-                                message_id=channel_message_id,
-                                caption=caption,
-                                parse_mode=ParseMode.MARKDOWN,
-                                reply_markup=create_song_buttons(
-                                    song_id,
-                                    playlist_id,
-                                    user_liked=user_liked,
-                                    already_added=already_added,
-                                ),
-                            )
-                        elif song.get('file_id'):
-                            await context.bot.send_audio(
-                                chat_id=user_id,
-                                audio=song['file_id'],
-                                caption=caption,
-                                parse_mode=ParseMode.MARKDOWN,
-                                reply_markup=create_song_buttons(
-                                    song_id,
-                                    playlist_id,
-                                    user_liked=user_liked,
-                                    already_added=already_added,
-                                ),
-                            )
-                        else:
-                            raise ValueError('Missing song storage reference')
-                        await asyncio.sleep(0.5)
-                    except Exception as e:
-                        logger.error(f"Failed to send audio: {e}")
+        await send_playlist_details(user_id, playlist, context, playlist_id)
 
     # User quick actions
     elif data == 'my_playlists':

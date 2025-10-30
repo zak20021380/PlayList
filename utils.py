@@ -4,6 +4,8 @@
 import requests
 from datetime import datetime
 from typing import Optional, Dict
+from urllib.parse import quote_plus
+
 from config import *
 
 
@@ -198,6 +200,29 @@ def should_send_notification(user_id: int, db) -> bool:
     if not user:
         return False
     return user.get('notifications_enabled', True)
+
+
+# ===== SHARE LINK HELPERS =====
+
+def build_playlist_deep_link(playlist_id: str) -> str:
+    """Return deep link that opens the bot on a specific playlist"""
+    username = BOT_USERNAME.lstrip('@') if BOT_USERNAME else ''
+    return f"https://t.me/{username}?start=pl_{playlist_id}" if username else ""
+
+
+def build_playlist_share_url(playlist_id: str, playlist_name: str) -> str:
+    """Return Telegram share URL for a playlist"""
+    deep_link = build_playlist_deep_link(playlist_id)
+    if not deep_link:
+        return ""
+
+    share_text = f"🎧 پلی‌لیست {playlist_name}"
+    return (
+        "https://t.me/share/url?url="
+        + quote_plus(deep_link)
+        + "&text="
+        + quote_plus(share_text)
+    )
 
 
 # ===== PLAYLIST HELPERS =====
