@@ -74,6 +74,97 @@ def get_main_keyboard():
     return keyboard
 
 
+def _get_support_contact():
+    """Return formatted support handle and direct link"""
+    username = (SUPPORT_USERNAME or "").strip()
+    username = username.lstrip('@')
+
+    if not username:
+        username = "support_bot"
+
+    handle = f"@{username}"
+    link = f"https://t.me/{username}"
+    return handle, link
+
+
+HELP_SECTION_CONTENT = {
+    "overview": HELP,
+    "quick_start": HELP_QUICK_START,
+    "playlist": HELP_PLAYLIST_MANAGEMENT,
+    "interactions": HELP_INTERACTIONS,
+    "premium": HELP_PREMIUM,
+    "faq": HELP_FAQ,
+    "support": HELP_SUPPORT,
+}
+
+
+HELP_SECTION_BUTTONS = [
+    ("quick_start", HELP_BTN_QUICK_START),
+    ("playlist", HELP_BTN_PLAYLIST),
+    ("interactions", HELP_BTN_INTERACTIONS),
+    ("premium", HELP_BTN_PREMIUM),
+    ("faq", HELP_BTN_FAQ),
+    ("support", HELP_BTN_SUPPORT),
+]
+
+
+def build_help_keyboard(section: str, support_link: str) -> InlineKeyboardMarkup:
+    """Create inline keyboard for help center"""
+    rows = []
+
+    if section != "overview":
+        rows.append([
+            InlineKeyboardButton(
+                HELP_BTN_OVERVIEW,
+                callback_data="help_section:overview",
+            )
+        ])
+
+    for index in range(0, len(HELP_SECTION_BUTTONS), 2):
+        row = [
+            InlineKeyboardButton(label, callback_data=f"help_section:{key}")
+            for key, label in HELP_SECTION_BUTTONS[index:index + 2]
+        ]
+        if row:
+            rows.append(row)
+
+    rows.append([
+        InlineKeyboardButton(
+            HELP_BTN_CONTACT_SUPPORT,
+            url=support_link,
+        )
+    ])
+
+    return InlineKeyboardMarkup(rows)
+
+
+async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE, section: str = "overview"):
+    """Render the help center with the requested section"""
+    support_handle, support_link = _get_support_contact()
+    support_handle_md = f"[{support_handle}]({support_link})"
+
+    free_limit = "∞" if not FREE_PLAYLIST_LIMIT else str(FREE_PLAYLIST_LIMIT)
+    free_songs = "∞" if not FREE_SONGS_PER_PLAYLIST else str(FREE_SONGS_PER_PLAYLIST)
+
+    template = HELP_SECTION_CONTENT.get(section, HELP_SECTION_CONTENT["overview"])
+    message = template.format(
+        support_handle=support_handle_md,
+        min_songs=MIN_SONGS_TO_PUBLISH,
+        free_limit=free_limit,
+        free_songs=free_songs,
+        support_link=support_link,
+    )
+
+    keyboard = build_help_keyboard(section, support_link)
+
+    await send_response(
+        update,
+        message,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+
 async def send_response(
     update: Update,
     text: str,
@@ -416,7 +507,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Help command"""
-    await update.message.reply_text(HELP, parse_mode=ParseMode.MARKDOWN)
+    await show_help(update, context)
 
 
 async def new_playlist_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1293,6 +1384,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.touch_user(user_id)
 
     # Browse menus
+    if data.startswith('help_section:'):
+        section = data.split(':', 1)[1]
+        await show_help(update, context, section)
+        return
+
     if data == 'browse_menu':
         context.user_data.pop('awaiting_search', None)
         await browse(update, context)
