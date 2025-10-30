@@ -1171,11 +1171,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         playlist = db.get_playlist(playlist_id)
 
         if not playlist:
-            await query.edit_message_text(ERROR_NOT_FOUND)
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
             return
 
         if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
-            await query.answer(PLAYLIST_NOT_PUBLISHED)
+            await query.answer(PLAYLIST_NOT_PUBLISHED, show_alert=True)
             return
 
         # Check if already liked
@@ -1256,7 +1256,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except BadRequest as exc:
             logger.warning(
-                "Unable to update song buttons after like: %s",
+                "BadRequest while updating song buttons after like: %s",
                 exc,
             )
         except Exception as exc:
