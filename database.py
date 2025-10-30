@@ -290,18 +290,70 @@ class Database:
         """Get playlist by ID"""
         return self.data['playlists'].get(playlist_id)
 
-    def delete_playlist(self, playlist_id: str):
-        """Delete playlist"""
+    def delete_playlist(self, playlist_id: str) -> List[Tuple[int, int]]:
+        """Delete playlist and return storage channel messages to remove"""
+        deleted_messages: List[Tuple[int, int]] = []
+
         playlist = self.get_playlist(playlist_id)
-        if playlist:
-            user_id = playlist['owner_id']
-            user = self.get_user(int(user_id))
-            if user and playlist_id in user['playlists']:
-                user['playlists'].remove(playlist_id)
-                if user.get('active_playlist_id') == playlist_id:
-                    user['active_playlist_id'] = self._find_fallback_playlist_id(int(user_id))
-            del self.data['playlists'][playlist_id]
-            self.save_data()
+        if not playlist:
+            return deleted_messages
+
+        user_id = playlist['owner_id']
+        user = self.get_user(int(user_id)) if user_id else None
+
+        # Collect songs for cleanup
+        for song_id in list(playlist.get('songs', [])):
+            song = self.data['songs'].get(song_id)
+            if not song:
+                continue
+
+            channel_message_id = song.get('channel_message_id')
+            storage_channel_id = song.get('storage_channel_id', STORAGE_CHANNEL_ID)
+
+            if (
+                channel_message_id
+                and self._is_channel_message_unique(song_id, storage_channel_id, channel_message_id)
+            ):
+                channel_id_int = int(storage_channel_id) if storage_channel_id is not None else STORAGE_CHANNEL_ID
+                deleted_messages.append((channel_id_int, int(channel_message_id)))
+
+            # Remove song entry
+            del self.data['songs'][song_id]
+
+        if user and playlist_id in user['playlists']:
+            user['playlists'].remove(playlist_id)
+            if user.get('active_playlist_id') == playlist_id:
+                user['active_playlist_id'] = self._find_fallback_playlist_id(int(user_id))
+
+        del self.data['playlists'][playlist_id]
+        self.save_data()
+
+        return deleted_messages
+
+    def _is_channel_message_unique(
+        self,
+        song_id: str,
+        storage_channel_id: Optional[int],
+        channel_message_id: Optional[int],
+    ) -> bool:
+        """Check if the forwarded message is only used by the given song"""
+        if channel_message_id is None:
+            return False
+
+        for other_song_id, other_song in self.data.get('songs', {}).items():
+            if other_song_id == song_id:
+                continue
+
+            other_channel_id = other_song.get('storage_channel_id', STORAGE_CHANNEL_ID)
+            other_message_id = other_song.get('channel_message_id')
+
+            if (
+                other_channel_id == storage_channel_id
+                and other_message_id == channel_message_id
+            ):
+                return False
+
+        return True
 
     def get_user_playlists(self, user_id: int) -> List[Dict]:
         """Get all playlists of a user"""
