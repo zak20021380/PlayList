@@ -44,6 +44,7 @@ class Database:
             user.setdefault('total_adds', 0)
             user.setdefault('added_playlists', [])
             user.setdefault('last_seen', user.get('join_date', datetime.now().isoformat()))
+            user.setdefault('pending_payment', None)
 
         # Update playlists with new fields
         users = data.get('users', {})
@@ -128,6 +129,7 @@ class Database:
             'join_date': datetime.now().isoformat(),
             'last_seen': datetime.now().isoformat(),
             'active_playlist_id': None,
+            'pending_payment': None,
         }
 
         self.data['users'][user_id] = user
@@ -208,9 +210,73 @@ class Database:
             'premium_until': expiry.isoformat(),
             'premium_plan_id': plan_id,
             'premium_price': price,
+            'pending_payment': None,
         })
+        self.apply_premium_limits(user_id)
         # Give premium badge
         self.add_badge(user_id, 'premium')
+
+    def apply_premium_limits(self, user_id: int):
+        """Ensure premium users have upgraded limits on existing playlists"""
+        user = self.get_user(user_id)
+        if not user:
+            return
+
+        max_songs_limit = PREMIUM_SONGS_PER_PLAYLIST if PREMIUM_SONGS_PER_PLAYLIST > 0 else 0
+
+        updated = False
+
+        for playlist_id in user.get('playlists', []):
+            playlist = self.get_playlist(playlist_id)
+            if not playlist:
+                continue
+
+            current_limit = playlist.get('max_songs', 0) or 0
+            if max_songs_limit == 0:
+                if current_limit != 0:
+                    playlist['max_songs'] = 0
+                    updated = True
+            elif current_limit < max_songs_limit:
+                playlist['max_songs'] = max_songs_limit
+                updated = True
+
+        if updated:
+            self.save_data()
+
+    def set_pending_payment(
+        self,
+        user_id: int,
+        *,
+        authority: str,
+        amount: int,
+        plan_id: str,
+        title: str,
+        duration_days: int,
+    ):
+        """Persist pending payment data for user"""
+        user = self.get_user(user_id)
+        if not user:
+            return
+
+        user['pending_payment'] = {
+            'authority': authority,
+            'amount': amount,
+            'plan_id': plan_id,
+            'title': title,
+            'duration_days': duration_days,
+            'created_at': datetime.now().isoformat(),
+        }
+        self.save_data()
+
+    def clear_pending_payment(self, user_id: int):
+        """Remove pending payment info for user"""
+        user = self.get_user(user_id)
+        if not user:
+            return
+
+        if user.get('pending_payment') is not None:
+            user['pending_payment'] = None
+            self.save_data()
 
     # ===== PREMIUM PLANS =====
 
