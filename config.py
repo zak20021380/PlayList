@@ -81,6 +81,10 @@ BOT_NAME = "پلی‌لیست"
 BOT_USERNAME = "@PlayList4_Bot"
 NOTIFICATION_DELAY = 0.2
 
+# ====== SUPPORT ======
+# یوزرنیم اکانت پشتیبانی (بدون @) برای لینک‌دهی در راهنما
+SUPPORT_USERNAME = "support_bot"
+
 # ====== ZARINPAL PAYMENT GATEWAY ======
 ZARINPAL_MERCHANT_ID = "d97f7648-614f-4025-bee2-5f3cda6d8fcd"  # مرچنت آیدی زرین‌پال
 ZARINPAL_CALLBACK_URL = "https://yourdomain.com/verify"  # آدرس کال‌بک (بعداً تنظیم میکنیم)
