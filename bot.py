@@ -895,6 +895,45 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("این پلی‌لیست خالیه!")
             return
 
+        # Send playlist info before songs
+        mood_label = DEFAULT_MOODS.get(playlist.get('mood', 'happy'), playlist.get('mood', 'نامشخص'))
+        songs_info_lines = []
+
+        for index, song_id in enumerate(playlist['songs'], 1):
+            song = db.data['songs'].get(song_id)
+            if not song:
+                continue
+
+            title = song.get('title') or 'بدون عنوان'
+            performer = song.get('performer') or ''
+            duration = format_duration(song.get('duration', 0))
+
+            title_md = escape_markdown(str(title))
+            performer_md = escape_markdown(str(performer)) if performer and performer.lower() != 'unknown' else ''
+
+            if performer_md:
+                songs_info_lines.append(f"{index}. {title_md} — {performer_md} ({duration})")
+            else:
+                songs_info_lines.append(f"{index}. {title_md} ({duration})")
+
+        if songs_info_lines:
+            songs_text = "\n".join(songs_info_lines)
+        else:
+            songs_text = "هیچ آهنگی برای نمایش موجود نیست."
+
+        playlist_summary = (
+            f"🎧 **{escape_markdown(playlist['name'])}**\n"
+            f"📂 دسته‌بندی: {escape_markdown(mood_label)}\n"
+            f"🎵 تعداد آهنگ‌ها: {len(playlist['songs'])}\n\n"
+            f"{songs_text}"
+        )
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=playlist_summary,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
         # Increment plays
         db.increment_plays(playlist_id)
 
