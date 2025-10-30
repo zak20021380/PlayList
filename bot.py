@@ -145,6 +145,8 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE, section:
 
     free_limit = "∞" if not FREE_PLAYLIST_LIMIT else str(FREE_PLAYLIST_LIMIT)
     free_songs = "∞" if not FREE_SONGS_PER_PLAYLIST else str(FREE_SONGS_PER_PLAYLIST)
+    premium_limit = "∞" if not PREMIUM_PLAYLIST_LIMIT else str(PREMIUM_PLAYLIST_LIMIT)
+    premium_songs = "∞" if not PREMIUM_SONGS_PER_PLAYLIST else str(PREMIUM_SONGS_PER_PLAYLIST)
 
     template = HELP_SECTION_CONTENT.get(section, HELP_SECTION_CONTENT["overview"])
     message = template.format(
@@ -152,6 +154,8 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE, section:
         min_songs=MIN_SONGS_TO_PUBLISH,
         free_limit=free_limit,
         free_songs=free_songs,
+        premium_limit=premium_limit,
+        premium_songs=premium_songs,
         support_link=support_link,
     )
 
@@ -524,8 +528,18 @@ async def new_playlist_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     limit = PREMIUM_PLAYLIST_LIMIT if is_premium else FREE_PLAYLIST_LIMIT
 
     if limit and limit > 0 and len(user['playlists']) >= limit:
+        account_type = "پریمیوم" if is_premium else "رایگان"
+        extra_hint = (
+            "برای ساخت پلی‌لیست جدید باید یکی از پلی‌لیست‌های فعلی رو حذف یا آرشیو کنی."
+            if is_premium
+            else "برای امکانات بیشتر می‌تونی از منوی /premium پلن مناسب رو انتخاب کنی."
+        )
         await update.message.reply_text(
-            PLAYLIST_LIMIT_REACHED.format(limit=limit),
+            PLAYLIST_LIMIT_REACHED.format(
+                limit=limit,
+                account_type=account_type,
+                extra_hint=extra_hint,
+            ),
             parse_mode=ParseMode.MARKDOWN
         )
         return ConversationHandler.END
@@ -594,7 +608,8 @@ async def new_playlist_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 base_message
                 + "\n\n"
                 + "فقط فایل صوتی بفرست؛ اگه اسم پلی‌لیست رو تو کپشن هم بنویسی سریع‌تر می‌فهمم!"
-                + f"\n{publish_line}\nبعداً هر زمان خواستی آهنگ‌های بیشتری اضافه کن."
+                + f"\n{publish_line}\nبه عنوان کاربر پریمیوم می‌تونی تا {max_songs} آهنگ برای هر پلی‌لیست داشته باشی،"
+                + " پس بهترین‌ها رو گلچین کن."
             )
         else:
             message = (
@@ -684,14 +699,14 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_private = pl.get('is_private', False)
         visibility_icon = '🔒' if is_private else '🌐'
         visibility_text = 'مخفی' if is_private else 'عمومی'
-        max_songs = pl.get('max_songs', 0) or 0
-
-        if max_songs and max_songs < PREMIUM_SONGS_PER_PLAYLIST:
-            count_display = f"{songs_count}/{max_songs}"
-        elif max_songs and max_songs >= PREMIUM_SONGS_PER_PLAYLIST:
-            count_display = f"{songs_count}/∞"
-        elif is_premium:
-            count_display = f"{songs_count}/∞"
+        max_songs_raw = pl.get('max_songs')
+        if isinstance(max_songs_raw, int):
+            if max_songs_raw == 0:
+                count_display = f"{songs_count}/∞"
+            elif max_songs_raw > 0:
+                count_display = f"{songs_count}/{max_songs_raw}"
+            else:
+                count_display = str(songs_count)
         else:
             count_display = str(songs_count)
 
@@ -1219,7 +1234,18 @@ async def premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         plan_lines = "به زودی پلن‌های جدید اضافه میشه!"
 
-    info_text = PREMIUM_INFO.format(plans=plan_lines)
+    playlist_limit_display = "بی‌نهایت" if not PREMIUM_PLAYLIST_LIMIT else str(PREMIUM_PLAYLIST_LIMIT)
+    songs_limit_display = "بی‌نهایت" if not PREMIUM_SONGS_PER_PLAYLIST else str(PREMIUM_SONGS_PER_PLAYLIST)
+    follow_limit_display = (
+        "بی‌نهایت" if not PREMIUM_FOLLOW_LIMIT else format_number(PREMIUM_FOLLOW_LIMIT)
+    )
+
+    info_text = PREMIUM_INFO.format(
+        plans=plan_lines,
+        playlist_limit=playlist_limit_display,
+        songs_limit=songs_limit_display,
+        follow_limit=follow_limit_display,
+    )
 
     buttons = [
         [
@@ -1340,11 +1366,14 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     elif status == 'draft_progress':
         remaining = max(MIN_SONGS_TO_PUBLISH - updated_count, 0)
-        max_songs = updated_playlist.get('max_songs', 0) or 0
-        if max_songs and max_songs >= PREMIUM_SONGS_PER_PLAYLIST:
-            maximum_display = 'بی‌نهایت'
-        elif max_songs:
-            maximum_display = str(max_songs)
+        max_songs_value = updated_playlist.get('max_songs')
+        if isinstance(max_songs_value, int):
+            if max_songs_value == 0:
+                maximum_display = 'بی‌نهایت'
+            elif max_songs_value > 0:
+                maximum_display = str(max_songs_value)
+            else:
+                maximum_display = str(max(MIN_SONGS_TO_PUBLISH, updated_count))
         else:
             maximum_display = str(max(MIN_SONGS_TO_PUBLISH, updated_count))
 
@@ -1981,15 +2010,30 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             success_buttons = [[InlineKeyboardButton("🔙 برگشت", callback_data="back_main")]]
 
+            playlist_limit_display = "بی‌نهایت" if not PREMIUM_PLAYLIST_LIMIT else str(PREMIUM_PLAYLIST_LIMIT)
+            songs_limit_display = "بی‌نهایت" if not PREMIUM_SONGS_PER_PLAYLIST else str(PREMIUM_SONGS_PER_PLAYLIST)
+            follow_limit_display = (
+                "بی‌نهایت" if not PREMIUM_FOLLOW_LIMIT else format_number(PREMIUM_FOLLOW_LIMIT)
+            )
+
             await query.edit_message_text(
-                PREMIUM_ACTIVATED.format(date=expiry_date),
+                PREMIUM_ACTIVATED.format(
+                    date=expiry_date,
+                    playlist_limit=playlist_limit_display,
+                    songs_limit=songs_limit_display,
+                    follow_limit=follow_limit_display,
+                ),
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup(success_buttons)
             )
 
             await context.bot.send_message(
                 chat_id=user_id,
-                text=PREMIUM_BENEFITS_REMINDER,
+                text=PREMIUM_BENEFITS_REMINDER.format(
+                    playlist_limit=playlist_limit_display,
+                    songs_limit=songs_limit_display,
+                    follow_limit=follow_limit_display,
+                ),
                 parse_mode=ParseMode.MARKDOWN,
             )
 

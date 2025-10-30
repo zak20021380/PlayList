@@ -56,7 +56,10 @@ class Database:
             default_limit = (
                 PREMIUM_SONGS_PER_PLAYLIST if owner and owner.get('premium') else FREE_SONGS_PER_PLAYLIST
             )
-            playlist.setdefault('max_songs', default_limit)
+            if default_limit and default_limit > 0:
+                playlist['max_songs'] = default_limit
+            else:
+                playlist['max_songs'] = 0
             playlist.setdefault('published_at', None)
             playlist.setdefault('is_private', False)
             if status not in ('draft', 'published'):
@@ -179,6 +182,7 @@ class Database:
             expiry = datetime.fromisoformat(user['premium_until'])
             if datetime.now() > expiry:
                 self.update_user(user_id, {'premium': False})
+                self.apply_free_limits(user_id)
                 return False
         return True
 
@@ -216,14 +220,12 @@ class Database:
         # Give premium badge
         self.add_badge(user_id, 'premium')
 
-    def apply_premium_limits(self, user_id: int):
-        """Ensure premium users have upgraded limits on existing playlists"""
-        user = self.get_user(user_id)
-        if not user:
+    def _apply_playlist_song_limits(self, user: Dict, target_limit: int):
+        """Apply song limit to all playlists owned by user"""
+        if user is None:
             return
 
-        max_songs_limit = PREMIUM_SONGS_PER_PLAYLIST if PREMIUM_SONGS_PER_PLAYLIST > 0 else 0
-
+        limit_value = target_limit if target_limit and target_limit > 0 else 0
         updated = False
 
         for playlist_id in user.get('playlists', []):
@@ -232,16 +234,33 @@ class Database:
                 continue
 
             current_limit = playlist.get('max_songs', 0) or 0
-            if max_songs_limit == 0:
+
+            if limit_value == 0:
                 if current_limit != 0:
                     playlist['max_songs'] = 0
                     updated = True
-            elif current_limit < max_songs_limit:
-                playlist['max_songs'] = max_songs_limit
+            elif current_limit != limit_value:
+                playlist['max_songs'] = limit_value
                 updated = True
 
         if updated:
             self.save_data()
+
+    def apply_premium_limits(self, user_id: int):
+        """Ensure premium users have enforced limits on existing playlists"""
+        user = self.get_user(user_id)
+        if not user:
+            return
+
+        self._apply_playlist_song_limits(user, PREMIUM_SONGS_PER_PLAYLIST)
+
+    def apply_free_limits(self, user_id: int):
+        """Ensure free users respect the standard limits"""
+        user = self.get_user(user_id)
+        if not user:
+            return
+
+        self._apply_playlist_song_limits(user, FREE_SONGS_PER_PLAYLIST)
 
     def set_pending_payment(
         self,

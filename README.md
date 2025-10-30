@@ -45,9 +45,10 @@ python bot.py
 
 ## 💎 Premium ($4/month)
 
-- Unlimited playlists
-- Unlimited uploads
-- No ads
+- Manage up to 3 curated playlists
+- Add up to 3 songs per playlist
+- Priority discovery placement
+- Advanced analytics & no ads
 - Premium badge
 
 ## 👨‍💼 Admin Commands
