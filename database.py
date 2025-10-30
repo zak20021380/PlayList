@@ -431,31 +431,42 @@ class Database:
             return False
 
         user_id_str = str(user_id)
+        playlist_likes = playlist.setdefault('likes', [])
 
         # Check if already liked
-        if user_id_str in playlist.get('likes', []):
+        if user_id_str in playlist_likes:
             return False
 
         # Add like
-        if 'likes' not in playlist:
-            playlist['likes'] = []
-        playlist['likes'].append(user_id_str)
+        playlist_likes.append(user_id_str)
 
         # Add to user's liked playlists
-        if playlist_id not in user['liked_playlists']:
-            user['liked_playlists'].append(playlist_id)
+        liked_playlists = user.setdefault('liked_playlists', [])
+        if playlist_id not in liked_playlists:
+            liked_playlists.append(playlist_id)
 
         # Update owner stats
-        owner = self.get_user(int(playlist['owner_id']))
+        owner = None
+        owner_id_int = None
+        owner_id_raw = playlist.get('owner_id')
+        if owner_id_raw is not None:
+            try:
+                owner_id_int = int(owner_id_raw)
+                owner = self.get_user(owner_id_int)
+            except (TypeError, ValueError):
+                owner = None
+
         if owner:
-            owner['total_likes_received'] += 1
+            owner['total_likes_received'] = owner.get('total_likes_received', 0) + 1
 
             # Check badges
             total_likes = owner['total_likes_received']
-            if total_likes >= 100 and 'popular' not in owner['badges']:
-                self.add_badge(int(playlist['owner_id']), 'popular')
+            if total_likes >= 100 and 'popular' not in owner.get('badges', []):
+                if owner_id_int is not None:
+                    self.add_badge(owner_id_int, 'popular')
 
-        self.data['stats']['total_likes'] += 1
+        stats = self.data.setdefault('stats', {})
+        stats['total_likes'] = stats.get('total_likes', 0) + 1
         self.save_data()
         return True
 

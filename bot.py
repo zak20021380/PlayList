@@ -95,14 +95,29 @@ async def send_response(
         )
 
 
-async def send_notification(user_id: int, message: str, context: ContextTypes.DEFAULT_TYPE):
-    """Send notification to user"""
-    if should_send_notification(user_id, db):
-        try:
-            await context.bot.send_message(chat_id=user_id, text=message, parse_mode=ParseMode.MARKDOWN)
-            await asyncio.sleep(NOTIFICATION_DELAY)
-        except Exception as e:
-            logger.error(f"Failed to send notification to {user_id}: {e}")
+async def send_notification(user_id: int, message: str, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Send notification to user if allowed"""
+    user = db.get_user(user_id)
+    if not user:
+        return False
+
+    if user.get('banned'):
+        return False
+
+    if not user.get('notifications_enabled', True):
+        return False
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=message,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        await asyncio.sleep(NOTIFICATION_DELAY)
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to send notification to {user_id}: {e}")
+        return False
 
 
 async def send_playlist_details(
@@ -163,7 +178,7 @@ async def send_playlist_details(
 
             caption = get_song_info(song)
             original_id = song.get('original_song_id', song_id)
-            user_liked = str(user_id) in song.get('likes', [])
+            user_liked = str(user_id) in playlist.get('likes', [])
             already_added = db.user_has_song_copy(user_id, original_id)
 
             try:
@@ -1020,7 +1035,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         playlist = db.get_playlist(playlist_id)
 
         if not playlist:
-            await query.edit_message_text(ERROR_NOT_FOUND)
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
             return
 
         if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
@@ -1049,57 +1064,59 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.answer(ALREADY_LIKED)
 
-    elif data.startswith('like_song:'):
-        try:
-            _, playlist_id, song_id = data.split(':', 2)
-        except ValueError:
-            await query.answer(ERROR_GENERAL, show_alert=True)
-            return
+    elif data.startswith('like_song_') or data.startswith('like_song:'):
+        if data.startswith('like_song_'):
+            song_id = data.replace('like_song_', '', 1)
+        else:
+            parts = data.split(':', 2)
+            if len(parts) == 3:
+                song_id = parts[2]
+            else:
+                await query.answer(ERROR_GENERAL, show_alert=True)
+                return
 
         song = db.data['songs'].get(song_id)
         if not song:
             await query.answer(ERROR_NOT_FOUND, show_alert=True)
             return
 
-        if str(user_id) in song.get('likes', []):
-            db.unlike_song(user_id, song_id)
+        playlist_id = song.get('playlist_id') or song.get('added_from_playlist_id')
+        playlist = db.get_playlist(playlist_id) if playlist_id else None
+
+        if not playlist:
+            for pl in db.data.get('playlists', {}).values():
+                if song_id in pl.get('songs', []):
+                    playlist = pl
+                    playlist_id = pl.get('id')
+                    break
+
+        if not playlist or not playlist_id:
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
+            return
+
+        if str(user_id) in playlist.get('likes', []):
+            db.unlike_playlist(user_id, playlist_id)
             await query.answer(UNLIKED)
-            liked = False
         else:
-            if db.like_song(user_id, song_id):
+            if db.like_playlist(user_id, playlist_id):
                 await query.answer(LIKED)
-                liked = True
 
-                uploader_id = song.get('uploader_id')
-                if uploader_id and int(uploader_id) != user_id:
-                    liker = db.get_user(user_id)
-                    notif_text = NOTIF_SONG_LIKED.format(
-                        user=liker['first_name'],
-                        song=song.get('title', 'آهنگ'),
-                    )
-                    await send_notification(int(uploader_id), notif_text, context)
-
-                await send_notification(
-                    user_id,
-                    NOTIF_SONG_LIKED_SELF.format(song=song.get('title', 'آهنگ')),
-                    context,
-                )
+                owner_id_str = playlist.get('owner_id')
+                if owner_id_str:
+                    try:
+                        owner_id = int(owner_id_str)
+                    except (TypeError, ValueError):
+                        owner_id = None
+                    if owner_id and owner_id != user_id:
+                        liker = db.get_user(user_id)
+                        liker_name = liker.get('first_name') if liker else 'کاربر'
+                        notif_text = NOTIF_LIKED.format(
+                            user=liker_name,
+                            playlist=playlist.get('name', 'پلی‌لیست'),
+                        )
+                        await send_notification(owner_id, notif_text, context)
             else:
                 await query.answer(ALREADY_LIKED)
-                return
-
-        already_added = db.user_has_song_copy(user_id, song.get('original_song_id', song_id))
-        try:
-            await query.message.edit_reply_markup(
-                reply_markup=create_song_buttons(
-                    song_id,
-                    playlist_id,
-                    user_liked=liked,
-                    already_added=already_added,
-                )
-            )
-        except Exception as exc:
-            logger.error(f"Failed to update song buttons after like: {exc}")
 
     # Add to playlist
     elif data.startswith('add_'):
@@ -1237,6 +1254,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
         )
 
+        source_playlist = db.get_playlist(pending['source_playlist_id'])
+        source_user_liked = False
+        if source_playlist:
+            source_user_liked = str(user_id) in source_playlist.get('likes', [])
+
         try:
             await context.bot.edit_message_reply_markup(
                 chat_id=user_id,
@@ -1244,7 +1266,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=create_song_buttons(
                     song_id,
                     pending['source_playlist_id'],
-                    user_liked=str(user_id) in original_song.get('likes', []),
+                    user_liked=source_user_liked,
                     already_added=True,
                 ),
             )

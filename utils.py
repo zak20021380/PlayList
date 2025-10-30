@@ -382,7 +382,7 @@ def create_song_buttons(
         [
             InlineKeyboardButton(
                 like_label,
-                callback_data=f"like_song:{playlist_id}:{song_id}",
+                callback_data=f"like_song_{song_id}",
             ),
             InlineKeyboardButton(
                 add_label,
