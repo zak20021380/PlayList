@@ -429,22 +429,37 @@ class Database:
             return next(iter(moods.keys()))
         return 'happy'
 
-    def add_mood(self, key: str, title: str) -> Tuple[bool, str]:
-        """Add a new playlist category"""
+    def _generate_mood_key(self, base: str) -> str:
+        """Generate a unique ascii key for a mood title"""
+        slug = base.strip().lower()
+        slug = re.sub(r"\s+", "_", slug)
+        slug = re.sub(r"[^a-z0-9_]+", "", slug)
+
+        if not slug:
+            slug = "mood"
+
+        candidate = slug
+        counter = 1
         moods = self.data.setdefault('moods', {})
 
-        normalized_key = key.strip().lower()
-        normalized_key = re.sub(r"\s+", "_", normalized_key)
+        while candidate in moods:
+            counter += 1
+            candidate = f"{slug}_{counter}"
 
-        if not normalized_key or not re.fullmatch(r"[a-z0-9_]+", normalized_key):
-            return False, 'invalid_key'
+        return candidate
+
+    def add_mood(self, title: str) -> Tuple[bool, str]:
+        """Add a new playlist category"""
+        moods = self.data.setdefault('moods', {})
 
         display_title = title.strip()
         if not display_title:
             return False, 'invalid_title'
 
-        if normalized_key in moods:
-            return False, 'exists'
+        if any(existing.strip() == display_title for existing in moods.values()):
+            return False, 'duplicate_title'
+
+        normalized_key = self._generate_mood_key(display_title)
 
         moods[normalized_key] = display_title
         self.save_data()

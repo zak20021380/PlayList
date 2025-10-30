@@ -634,12 +634,6 @@ async def admin_plan_delete_confirm(update: Update, context: ContextTypes.DEFAUL
 
 # ===== SETTINGS & CATEGORIES =====
 
-def _normalize_mood_key(raw_key: str) -> str:
-    """Normalize mood key to snake_case ascii string"""
-    normalized = raw_key.strip().lower()
-    normalized = re.sub(r"\s+", "_", normalized)
-    return normalized
-
 
 def build_mood_management_view():
     """Return text and keyboard for mood management"""
@@ -702,9 +696,7 @@ async def admin_add_mood_start(update: Update, context: ContextTypes.DEFAULT_TYP
 
     instructions = (
         "➕ **افزودن دسته‌بندی جدید**\n\n"
-        "کلید انگلیسی و عنوان نمایشی رو با فرمت زیر بفرست:\n"
-        "`key | عنوان`\n\n"
-        "مثال: `lofi | 🎧 لوفای`\n\n"
+        "فقط اموجی و نام فارسی دسته‌بندی رو بفرست؛ مثال: `🎧 لوفای`\n\n"
         "برای لغو از /cancel استفاده کن."
     )
 
@@ -723,23 +715,40 @@ async def admin_add_mood_save(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     text = (update.message.text or "").strip()
 
-    if '|' not in text:
+    parts = text.split(maxsplit=1)
+
+    if len(parts) < 2:
+        persian_match = re.search(r"[\u0600-\u06FF]", text)
+        if not persian_match:
+            await update.message.reply_text(
+                "ورودی باید شامل یک اموجی و نام فارسی دسته‌بندی باشد.",
+            )
+            return ADD_MOOD_INPUT
+
+        emoji_part = text[:persian_match.start()].strip()
+        title_part = text[persian_match.start():].strip()
+    else:
+        emoji_part, title_part = parts[0], parts[1].strip()
+
+    if not emoji_part or not title_part:
         await update.message.reply_text(
-            "فرمت ورودی نامعتبره! با الگوی `key | عنوان` بفرست.",
-            parse_mode=ParseMode.MARKDOWN,
+            "ورودی باید شامل یک اموجی و نام فارسی دسته‌بندی باشد.",
         )
         return ADD_MOOD_INPUT
 
-    key_part, title_part = [part.strip() for part in text.split('|', 1)]
-    normalized_key = _normalize_mood_key(key_part)
+    if not re.search(r"[\u0600-\u06FF]", title_part):
+        await update.message.reply_text(
+            "نام دسته‌بندی باید به فارسی نوشته شود.",
+        )
+        return ADD_MOOD_INPUT
 
-    success, result = db.add_mood(normalized_key, title_part)
+    display_title = " ".join(part for part in [emoji_part, title_part] if part)
+
+    success, result = db.add_mood(display_title)
 
     if not success:
-        if result == 'exists':
-            message = "این کلید قبلاً استفاده شده. یک کلید دیگه انتخاب کن."
-        elif result == 'invalid_key':
-            message = "کلید نامعتبره! فقط حروف انگلیسی، اعداد و زیرخط مجازه."
+        if result == 'duplicate_title':
+            message = "این دسته‌بندی از قبل وجود داره."
         elif result == 'invalid_title':
             message = "عنوان دسته‌بندی نمی‌تونه خالی باشه."
         else:
@@ -748,7 +757,7 @@ async def admin_add_mood_save(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(message)
         return ADD_MOOD_INPUT
 
-    escaped_title = escape_markdown(title_part)
+    escaped_title = escape_markdown(display_title)
     await update.message.reply_text(
         f"✅ دسته‌بندی جدید با کلید `{result}` و عنوان {escaped_title} اضافه شد!",
         parse_mode=ParseMode.MARKDOWN,
