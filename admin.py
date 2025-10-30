@@ -5,11 +5,15 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 import asyncio
+import logging
 
 from config import *
 from database import db
 from utils import *
 from texts import *
+
+
+logger = logging.getLogger(__name__)
 
 # Conversation states for admin
 (
@@ -727,7 +731,29 @@ async def admin_delete_playlist(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("پلی‌لیست پیدا نشد!")
         return
 
-    db.delete_playlist(playlist_id)
+    deleted_messages = db.delete_playlist(playlist_id)
+
+    for channel_id, message_id in deleted_messages:
+        try:
+            await context.bot.delete_message(
+                chat_id=channel_id,
+                message_id=message_id,
+            )
+        except BadRequest as exc:
+            logger.warning(
+                "BadRequest while deleting storage message %s from channel %s: %s",
+                message_id,
+                channel_id,
+                exc,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to delete storage message %s from channel %s: %s",
+                message_id,
+                channel_id,
+                exc,
+            )
+
     await update.message.reply_text(
         f"✅ پلی‌لیست حذف شد!\n\n"
         f"📁 {playlist['name']}\n"

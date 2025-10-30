@@ -1482,7 +1482,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Confirm delete
     elif data.startswith('confirm_delete_'):
         playlist_id = data.replace('confirm_delete_', '')
-        db.delete_playlist(playlist_id)
+        deleted_messages = db.delete_playlist(playlist_id)
+
+        for channel_id, message_id in deleted_messages:
+            try:
+                await context.bot.delete_message(
+                    chat_id=channel_id,
+                    message_id=message_id,
+                )
+            except BadRequest as exc:
+                logger.warning(
+                    "BadRequest while deleting storage message %s from channel %s: %s",
+                    message_id,
+                    channel_id,
+                    exc,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to delete storage message %s from channel %s: %s",
+                    message_id,
+                    channel_id,
+                    exc,
+                )
+
         await query.edit_message_text(PLAYLIST_DELETED)
 
     # Cancel delete
