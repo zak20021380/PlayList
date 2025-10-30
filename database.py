@@ -33,6 +33,9 @@ class Database:
         if 'premium_plans' not in data:
             data['premium_plans'] = copy.deepcopy(DEFAULT_PREMIUM_PLANS)
 
+        data.setdefault('song_daily_likes', {})
+        data.setdefault('last_top_song_broadcast', None)
+
         # Update users with new premium fields if missing
         for user in data.get('users', {}).values():
             user.setdefault('premium_plan_id', None)
@@ -85,6 +88,8 @@ class Database:
                 'total_users': 0,
             },
             'premium_plans': copy.deepcopy(DEFAULT_PREMIUM_PLANS),
+            'song_daily_likes': {},
+            'last_top_song_broadcast': None,
         }
 
     def save_data(self):
@@ -611,6 +616,8 @@ class Database:
 
         likes.append(user_id_str)
 
+        self._record_song_daily_like(song_id)
+
         uploader_id = song.get('uploader_id')
         if uploader_id:
             owner = self.get_user(int(uploader_id))
@@ -644,6 +651,63 @@ class Database:
 
         self.save_data()
         return True
+
+    def _record_song_daily_like(self, song_id: Optional[str], date: Optional[str] = None):
+        """Increment daily like counter for a song"""
+        if not song_id:
+            return
+
+        date_str = date or datetime.now().strftime('%Y-%m-%d')
+        daily_likes = self.data.setdefault('song_daily_likes', {})
+        day_bucket = daily_likes.setdefault(date_str, {})
+        day_bucket[song_id] = day_bucket.get(song_id, 0) + 1
+
+        self._prune_song_daily_likes()
+
+    def _prune_song_daily_likes(self, retention_days: int = 14):
+        """Remove outdated daily like entries to keep database small"""
+        daily_likes = self.data.get('song_daily_likes', {})
+        if not daily_likes:
+            return
+
+        cutoff_date = datetime.now().date() - timedelta(days=retention_days)
+
+        for date_key in list(daily_likes.keys()):
+            try:
+                day_date = datetime.strptime(date_key, '%Y-%m-%d').date()
+            except ValueError:
+                continue
+
+            if day_date < cutoff_date:
+                daily_likes.pop(date_key, None)
+
+    def get_top_song_of_day(self, date: Optional[str] = None) -> Tuple[Optional[Dict], int]:
+        """Return the most liked song for the specified day"""
+        target_date = date or datetime.now().strftime('%Y-%m-%d')
+        daily_likes = self.data.get('song_daily_likes', {})
+        day_bucket = daily_likes.get(target_date, {})
+
+        if not day_bucket:
+            return None, 0
+
+        # Sort by likes descending
+        sorted_entries = sorted(day_bucket.items(), key=lambda item: item[1], reverse=True)
+
+        for song_id, like_count in sorted_entries:
+            song = self.data['songs'].get(song_id)
+            if song and like_count > 0:
+                return song, like_count
+
+        return None, 0
+
+    def get_last_top_song_broadcast(self) -> Optional[str]:
+        """Return the date string of the last daily top song broadcast"""
+        return self.data.get('last_top_song_broadcast')
+
+    def set_last_top_song_broadcast(self, date: str):
+        """Persist the date string of the latest daily top song broadcast"""
+        self.data['last_top_song_broadcast'] = date
+        self.save_data()
 
     def user_has_song_copy(self, user_id: int, original_song_id: str) -> bool:
         """Check if user already saved a copy of the song"""
