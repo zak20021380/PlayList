@@ -206,7 +206,7 @@ def should_send_notification(user_id: int, db) -> bool:
 def build_playlist_deep_link(playlist_id: str) -> str:
     """Return deep link that opens the bot on a specific playlist"""
     username = BOT_USERNAME.lstrip('@') if BOT_USERNAME else ''
-    return f"https://t.me/{username}?start=pl_{playlist_id}" if username else ""
+    return f"https://t.me/{username}?start={playlist_id}" if username else ""
 
 
 def build_playlist_share_url(playlist_id: str, playlist_name: str) -> str:

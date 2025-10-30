@@ -236,7 +236,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if args:
         payload = args[0]
         if payload.startswith('pl_'):
-            playlist_id = payload.replace('pl_', '', 1)
+            playlist_id = payload
             playlist = db.get_playlist(playlist_id)
 
             if not playlist:
