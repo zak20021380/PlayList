@@ -4,7 +4,6 @@
 import requests
 from datetime import datetime
 from typing import Optional, Dict
-from urllib.parse import quote_plus
 
 from config import *
 
@@ -211,18 +210,8 @@ def build_playlist_deep_link(playlist_id: str) -> str:
 
 
 def build_playlist_share_url(playlist_id: str, playlist_name: str) -> str:
-    """Return Telegram share URL for a playlist"""
-    deep_link = build_playlist_deep_link(playlist_id)
-    if not deep_link:
-        return ""
-
-    share_text = f"🎧 پلی‌لیست {playlist_name}"
-    return (
-        "https://t.me/share/url?url="
-        + quote_plus(deep_link)
-        + "&text="
-        + quote_plus(share_text)
-    )
+    """Return direct deep link that opens the playlist inside the bot"""
+    return build_playlist_deep_link(playlist_id)
 
 
 # ===== PLAYLIST HELPERS =====
