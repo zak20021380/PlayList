@@ -165,6 +165,8 @@ async def send_playlist_details(
             original_id = song.get('original_song_id', song_id)
             user_liked = str(user_id) in song.get('likes', [])
             already_added = db.user_has_song_copy(user_id, original_id)
+            like_count = len(song.get('likes', []))
+            add_count = db.count_song_adds(original_id)
 
             try:
                 channel_message_id = song.get('channel_message_id')
@@ -181,6 +183,8 @@ async def send_playlist_details(
                             playlist_identifier,
                             user_liked=user_liked,
                             already_added=already_added,
+                            like_count=like_count,
+                            add_count=add_count,
                         ),
                     )
                 elif song.get('file_id'):
@@ -194,6 +198,8 @@ async def send_playlist_details(
                             playlist_identifier,
                             user_liked=user_liked,
                             already_added=already_added,
+                            like_count=like_count,
+                            add_count=add_count,
                         ),
                     )
                 else:
@@ -737,7 +743,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = db.get_user(user_id)
 
     if not user:
-        await update.message.reply_text(ERROR_GENERAL)
+        await send_response(update, ERROR_GENERAL, parse_mode=None)
         return
 
     playlists = db.get_user_playlists(user_id)
@@ -746,11 +752,14 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status = "💎 پریمیوم" if db.is_premium(user_id) else "🆓 رایگان"
     badges_text = format_badges(user.get('badges', []))
+    added_playlists = db.get_user_added_playlists(user_id)
+    added_playlists_count = len(added_playlists)
 
     profile_text = PROFILE_TEXT.format(
         name=user['first_name'],
         playlists_count=len(playlists),
         songs_count=total_songs,
+        added_playlists_count=added_playlists_count,
         likes_received=user.get('total_likes_received', 0),
         plays_received=user.get('total_plays', 0),
         followers=len(user.get('followers', [])),
@@ -763,16 +772,75 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     buttons = [
         [InlineKeyboardButton("🎵 پلی‌لیست‌هام", callback_data="my_playlists")],
+        [InlineKeyboardButton(BTN_ADDED_PLAYLISTS, callback_data="added_playlists")],
         [InlineKeyboardButton("📊 آمار کامل", callback_data="my_stats")],
     ]
 
     if not db.is_premium(user_id):
         buttons.append([InlineKeyboardButton("💎 پریمیوم بگیر", callback_data="premium")])
 
-    await update.message.reply_text(
+    await send_response(
+        update,
         profile_text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(buttons)
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def show_added_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display playlists from which the user has saved songs"""
+    user_id = update.effective_user.id
+    playlists = db.get_user_added_playlists(user_id)
+
+    if not playlists:
+        await send_response(
+            update,
+            NO_ADDED_PLAYLISTS,
+            parse_mode=None,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 بازگشت", callback_data="back_profile")]
+            ]),
+        )
+        return
+
+    message_lines = [ADDED_PLAYLISTS_HEADER]
+    buttons = []
+
+    for index, playlist in enumerate(playlists, 1):
+        owner = db.get_user(int(playlist['owner_id'])) if playlist.get('owner_id') else None
+
+        if owner:
+            if owner.get('first_name') and owner['first_name'].lower() != 'unknown':
+                owner_name = owner['first_name']
+            elif owner.get('username'):
+                owner_name = f"@{owner['username']}"
+            else:
+                owner_name = f"کاربر {owner['user_id'][-4:]}"
+        else:
+            owner_name = "نامشخص"
+
+        message_lines.append(
+            ADDED_PLAYLISTS_ITEM.format(
+                index=index,
+                name=escape_markdown(playlist['name']),
+                owner=escape_markdown(owner_name),
+                likes=format_number(len(playlist.get('likes', []))),
+                songs=format_number(len(playlist.get('songs', []))),
+            )
+        )
+
+        buttons.append([
+            InlineKeyboardButton(
+                f"▶️ {playlist['name']}",
+                callback_data=f"play_{playlist['id']}",
+            )
+        ])
+
+    buttons.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_profile")])
+
+    await send_response(
+        update,
+        "".join(message_lines),
+        reply_markup=InlineKeyboardMarkup(buttons),
     )
 
 
@@ -1145,7 +1213,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer(ALREADY_LIKED)
                 return
 
-        already_added = db.user_has_song_copy(user_id, song.get('original_song_id', song_id))
+        original_id = song.get('original_song_id', song_id)
+        already_added = db.user_has_song_copy(user_id, original_id)
+        like_count = len(song.get('likes', []))
+        add_count = db.count_song_adds(original_id)
         try:
             await query.message.edit_reply_markup(
                 reply_markup=create_song_buttons(
@@ -1153,6 +1224,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     playlist_id,
                     user_liked=liked,
                     already_added=already_added,
+                    like_count=like_count,
+                    add_count=add_count,
                 )
             )
         except Exception as exc:
@@ -1294,6 +1367,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
         )
 
+        original_id = original_song.get('original_song_id', song_id)
+        like_count = len(original_song.get('likes', []))
+        add_count = db.count_song_adds(original_id)
         try:
             await context.bot.edit_message_reply_markup(
                 chat_id=user_id,
@@ -1303,6 +1379,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pending['source_playlist_id'],
                     user_liked=str(user_id) in original_song.get('likes', []),
                     already_added=True,
+                    like_count=like_count,
+                    add_count=add_count,
                 ),
             )
         except Exception as exc:
@@ -1333,6 +1411,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # User quick actions
     elif data == 'my_playlists':
         await my_playlists(update, context)
+
+    elif data == 'added_playlists':
+        await show_added_playlists(update, context)
 
     elif data == 'premium':
         await premium_info(update, context)
@@ -1397,6 +1478,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Back to main
     elif data == 'back_main':
         await query.message.delete()
+
+    elif data == 'back_profile':
+        await profile(update, context)
 
     # Buy premium
     elif data == 'buy_premium':
