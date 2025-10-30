@@ -118,7 +118,6 @@ HELP_BTN_OVERVIEW = "📚 فهرست راهنما"
 HELP_BTN_QUICK_START = "🚀 شروع سریع"
 HELP_BTN_PLAYLIST = "🎧 مدیریت پلی‌لیست"
 HELP_BTN_INTERACTIONS = "🤝 تعاملات اجتماعی"
-HELP_BTN_PREMIUM = "💎 عضویت پریمیوم"
 HELP_BTN_FAQ = "❓ سوالات متداول"
 HELP_BTN_SUPPORT = "🆘 ارتباط با پشتیبانی"
 HELP_BTN_CONTACT_SUPPORT = "💬 گفت‌وگو با پشتیبانی"
@@ -508,7 +507,6 @@ BTN_BROWSE = "🔍 مرور"
 BTN_TRENDING = "🔥 ترند"
 BTN_PROFILE = "👤 پروفایل"
 BTN_LEADERBOARD = "🏆 رتبه‌بندی"
-BTN_PREMIUM = "💎 پریمیوم"
 BTN_HELP = "❓ راهنما"
 BTN_SETTINGS = "⚙️ تنظیمات"
 

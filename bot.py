@@ -74,8 +74,8 @@ def get_main_keyboard():
     keyboard = [
         [BTN_MY_PLAYLISTS, BTN_BROWSE],
         [BTN_TRENDING, BTN_PROFILE],
-        [BTN_LEADERBOARD, BTN_PREMIUM],
-        [BTN_HELP, BTN_SETTINGS],
+        [BTN_LEADERBOARD, BTN_HELP],
+        [BTN_SETTINGS],
     ]
     return keyboard
 
@@ -125,7 +125,6 @@ HELP_SECTION_BUTTONS = [
     ("quick_start", HELP_BTN_QUICK_START),
     ("playlist", HELP_BTN_PLAYLIST),
     ("interactions", HELP_BTN_INTERACTIONS),
-    ("premium", HELP_BTN_PREMIUM),
     ("faq", HELP_BTN_FAQ),
     ("support", HELP_BTN_SUPPORT),
 ]
@@ -1155,9 +1154,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(BTN_ADDED_PLAYLISTS, callback_data="added_playlists")],
         [InlineKeyboardButton("📊 آمار کامل", callback_data="my_stats")],
     ]
-
-    if not db.is_premium(user_id):
-        buttons.append([InlineKeyboardButton("💎 پریمیوم بگیر", callback_data="premium")])
 
     await send_response(
         update,
@@ -2317,9 +2313,6 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == BTN_LEADERBOARD or "رتبه‌بندی" in text:
         await leaderboard(update, context)
-
-    elif text == BTN_PREMIUM or "پریمیوم" in text:
-        await premium_info(update, context)
 
     elif text == BTN_HELP or "راهنما" in text:
         await help_command(update, context)
