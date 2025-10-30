@@ -232,14 +232,15 @@ def build_playlist_share_url(playlist_id: str, playlist_name: str) -> str:
 
 # ===== PLAYLIST HELPERS =====
 
-def get_playlist_info(playlist: Dict) -> str:
+def get_playlist_info(playlist: Dict, moods: Optional[Dict[str, str]] = None) -> str:
     """Format playlist info for display"""
     name = playlist['name']
     owner = playlist['owner_name']
     songs_count = len(playlist.get('songs', []))
     likes_count = len(playlist.get('likes', []))
     plays = playlist.get('plays', 0)
-    mood = DEFAULT_MOODS.get(playlist.get('mood', 'happy'), '🎵')
+    mood_map = moods if moods is not None else DEFAULT_MOODS
+    mood = mood_map.get(playlist.get('mood', 'happy'), '🎵')
 
     return f"{mood} **{name}**\n👤 {owner} | 🎵 {songs_count} آهنگ | ❤️ {likes_count} | ▶️ {plays}"
 
@@ -350,13 +351,15 @@ def paginate_list(items: list, page: int = 1, per_page: int = 10) -> tuple:
 
 # ===== KEYBOARD HELPERS =====
 
-def create_mood_keyboard():
+def create_mood_keyboard(moods: Optional[Dict[str, str]] = None):
     """Create mood selection keyboard"""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
     buttons = []
     row = []
-    for mood_key, mood_name in DEFAULT_MOODS.items():
+    mood_map = moods if moods is not None else DEFAULT_MOODS
+
+    for mood_key, mood_name in mood_map.items():
         row.append(InlineKeyboardButton(mood_name, callback_data=f"mood_{mood_key}"))
         if len(row) == 2:
             buttons.append(row)

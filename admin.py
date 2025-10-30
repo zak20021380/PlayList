@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 import asyncio
 import logging
+import re
 
 from config import *
 from database import db
@@ -26,7 +27,8 @@ logger = logging.getLogger(__name__)
     ADD_PLAN_DURATION,
     EDIT_PLAN_PRICE,
     EDIT_PLAN_DURATION,
-) = range(9)
+    ADD_MOOD_INPUT,
+) = range(10)
 
 
 # ===== ADMIN STATS =====
@@ -630,6 +632,221 @@ async def admin_plan_delete_confirm(update: Update, context: ContextTypes.DEFAUL
     )
 
 
+# ===== SETTINGS & CATEGORIES =====
+
+def _normalize_mood_key(raw_key: str) -> str:
+    """Normalize mood key to snake_case ascii string"""
+    normalized = raw_key.strip().lower()
+    normalized = re.sub(r"\s+", "_", normalized)
+    return normalized
+
+
+def build_mood_management_view():
+    """Return text and keyboard for mood management"""
+    moods = db.get_moods()
+    mood_lines = []
+
+    for index, (key, title) in enumerate(moods.items(), 1):
+        mood_lines.append(f"{index}. `{key}` — {escape_markdown(title)}")
+
+    if not mood_lines:
+        mood_lines.append("هیچ دسته‌بندی فعالی ثبت نشده است.")
+
+    message = (
+        "⚙️ **تنظیمات مدیریتی**\n\n"
+        "📂 **دسته‌بندی‌های فعلی:**\n"
+        + "\n".join(mood_lines)
+        + "\n\nبرای افزودن یا حذف از دکمه‌های زیر استفاده کن."
+    )
+
+    buttons = [
+        [InlineKeyboardButton("➕ افزودن دسته‌بندی", callback_data="admin_add_mood")],
+    ]
+
+    for key, title in moods.items():
+        buttons.append([
+            InlineKeyboardButton(
+                f"🗑 حذف {title}",
+                callback_data=f"admin_delete_mood_{key}",
+            )
+        ])
+
+    buttons.append([InlineKeyboardButton("🔙 برگشت", callback_data="admin_panel")])
+
+    return message, InlineKeyboardMarkup(buttons)
+
+
+async def admin_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point for admin settings"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    message, markup = build_mood_management_view()
+    await query.edit_message_text(
+        message,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=markup,
+    )
+
+
+async def admin_add_mood_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Prompt admin to add new mood"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return ConversationHandler.END
+
+    instructions = (
+        "➕ **افزودن دسته‌بندی جدید**\n\n"
+        "کلید انگلیسی و عنوان نمایشی رو با فرمت زیر بفرست:\n"
+        "`key | عنوان`\n\n"
+        "مثال: `lofi | 🎧 لوفای`\n\n"
+        "برای لغو از /cancel استفاده کن."
+    )
+
+    await query.edit_message_text(
+        instructions,
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    return ADD_MOOD_INPUT
+
+
+async def admin_add_mood_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle mood creation input"""
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+
+    text = (update.message.text or "").strip()
+
+    if '|' not in text:
+        await update.message.reply_text(
+            "فرمت ورودی نامعتبره! با الگوی `key | عنوان` بفرست.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return ADD_MOOD_INPUT
+
+    key_part, title_part = [part.strip() for part in text.split('|', 1)]
+    normalized_key = _normalize_mood_key(key_part)
+
+    success, result = db.add_mood(normalized_key, title_part)
+
+    if not success:
+        if result == 'exists':
+            message = "این کلید قبلاً استفاده شده. یک کلید دیگه انتخاب کن."
+        elif result == 'invalid_key':
+            message = "کلید نامعتبره! فقط حروف انگلیسی، اعداد و زیرخط مجازه."
+        elif result == 'invalid_title':
+            message = "عنوان دسته‌بندی نمی‌تونه خالی باشه."
+        else:
+            message = "افزودن دسته‌بندی با خطا مواجه شد."
+
+        await update.message.reply_text(message)
+        return ADD_MOOD_INPUT
+
+    escaped_title = escape_markdown(title_part)
+    await update.message.reply_text(
+        f"✅ دسته‌بندی جدید با کلید `{result}` و عنوان {escaped_title} اضافه شد!",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    message, markup = build_mood_management_view()
+    await update.message.reply_text(
+        message,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=markup,
+    )
+
+    return ConversationHandler.END
+
+
+async def admin_delete_mood_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ask for mood deletion confirmation"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    mood_key = query.data.replace('admin_delete_mood_', '')
+    moods = db.get_moods()
+    mood_title = moods.get(mood_key)
+
+    if not mood_title:
+        await query.answer("دسته‌بندی پیدا نشد!", show_alert=True)
+        return
+
+    if len(moods) <= 1:
+        await query.answer("آخرین دسته‌بندی رو نمی‌تونی حذف کنی!", show_alert=True)
+        return
+
+    message = (
+        f"❗️ آیا از حذف دسته‌بندی {escape_markdown(mood_title)} مطمئنی؟\n"
+        f"کلید: `{mood_key}`\n\n"
+        "همه‌ی پلی‌لیست‌های این دسته به نزدیک‌ترین گزینه موجود منتقل میشن."
+    )
+
+    buttons = [
+        [
+            InlineKeyboardButton(
+                "✅ تایید حذف",
+                callback_data=f"admin_delete_mood_confirm_{mood_key}",
+            )
+        ],
+        [InlineKeyboardButton("🔙 انصراف", callback_data="admin_settings")],
+    ]
+
+    await query.edit_message_text(
+        message,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def admin_delete_mood_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Delete mood and refresh settings view"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    mood_key = query.data.replace('admin_delete_mood_confirm_', '')
+    success, result = db.delete_mood(mood_key)
+
+    if not success:
+        if result == 'not_found':
+            await query.answer("دسته‌بندی پیدا نشد!", show_alert=True)
+        elif result == 'last_one':
+            await query.answer("آخرین دسته‌بندی رو نمی‌تونی حذف کنی!", show_alert=True)
+        else:
+            await query.answer("حذف دسته‌بندی با خطا مواجه شد!", show_alert=True)
+        return
+
+    fallback_key = result or db.get_default_mood()
+    fallback_title = db.get_moods().get(fallback_key, '') if fallback_key else ''
+
+    await query.answer("دسته‌بندی حذف شد ✅")
+
+    message, markup = build_mood_management_view()
+
+    if fallback_title:
+        info = (
+            f"📂 پلی‌لیست‌های این دسته به `{fallback_key}` — {escape_markdown(fallback_title)} منتقل شدن."
+        )
+        message = f"{message}\n\n{info}"
+
+    await query.edit_message_text(
+        message,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=markup,
+    )
+
+
 # ===== BROADCAST =====
 
 async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -803,6 +1020,7 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         [InlineKeyboardButton("📊 آمار", callback_data="admin_stats")],
         [InlineKeyboardButton("👥 مدیریت کاربران", callback_data="admin_users")],
         [InlineKeyboardButton("💎 مدیریت پریمیوم", callback_data="admin_premium")],
+        [InlineKeyboardButton("⚙️ تنظیمات", callback_data="admin_settings")],
         [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="admin_broadcast")],
     ]
 
@@ -836,10 +1054,16 @@ __all__ = [
     'admin_plan_duration_value',
     'admin_plan_delete_start',
     'admin_plan_delete_confirm',
+    'admin_settings_callback',
+    'admin_add_mood_start',
+    'admin_add_mood_save',
+    'admin_delete_mood_start',
+    'admin_delete_mood_confirm',
     'admin_broadcast_start',
     'admin_broadcast_type',
     'admin_broadcast_send',
     'admin_delete_playlist',
     'admin_feature_playlist',
     'admin_panel_callback',
+    'ADD_MOOD_INPUT',
 ]

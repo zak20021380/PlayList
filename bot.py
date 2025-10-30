@@ -3,7 +3,7 @@
 
 import logging
 from datetime import datetime, time as datetime_time
-from typing import Optional
+from typing import Dict, Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -31,6 +31,7 @@ from admin import (
     ADD_PLAN_DURATION,
     EDIT_PLAN_PRICE,
     EDIT_PLAN_DURATION,
+    ADD_MOOD_INPUT,
     admin_premium,
     admin_premium_list,
     admin_give_premium_start,
@@ -48,6 +49,11 @@ from admin import (
     admin_plan_delete_start,
     admin_plan_delete_confirm,
     admin_stats_callback,
+    admin_settings_callback,
+    admin_add_mood_start,
+    admin_add_mood_save,
+    admin_delete_mood_start,
+    admin_delete_mood_confirm,
 )
 
 # Logging
@@ -85,6 +91,23 @@ def _get_support_contact():
     handle = f"@{username}"
     link = f"https://t.me/{username}"
     return handle, link
+
+
+def get_mood_map() -> Dict[str, str]:
+    """Return dynamic mood map from database with fallback"""
+    moods = db.get_moods()
+    if moods:
+        return moods
+    return DEFAULT_MOODS
+
+
+def get_mood_label(mood_key: Optional[str]) -> str:
+    """Resolve mood key to display label"""
+    mood_map = get_mood_map()
+    default_label = next(iter(mood_map.values()), '🎵 نامشخص')
+    if not mood_key:
+        return default_label
+    return mood_map.get(mood_key, f"🎵 {mood_key}")
 
 
 HELP_SECTION_CONTENT = {
@@ -237,10 +260,7 @@ async def send_playlist_details(
     """Send playlist summary and songs to a user"""
     playlist_identifier = playlist_id or playlist.get('id')
 
-    mood_label = DEFAULT_MOODS.get(
-        playlist.get('mood', 'happy'),
-        playlist.get('mood', 'نامشخص'),
-    )
+    mood_label = get_mood_label(playlist.get('mood'))
 
     songs_info_lines = []
 
@@ -604,7 +624,7 @@ async def new_playlist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Ask for mood
     await update.message.reply_text(
         NEW_PLAYLIST_MOOD,
-        reply_markup=create_mood_keyboard()
+        reply_markup=create_mood_keyboard(get_mood_map())
     )
     return PLAYLIST_MOOD
 
@@ -732,7 +752,7 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_premium = db.is_premium(user_id)
 
     for pl in playlists:
-        mood = DEFAULT_MOODS.get(pl['mood'], '🎵')
+        mood = get_mood_label(pl.get('mood'))
         songs_count = len(pl.get('songs', []))
         likes_count = len(pl.get('likes', []))
         name = escape_markdown(pl['name'])
@@ -855,7 +875,7 @@ async def browse(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Add mood categories
     mood_buttons = []
-    for mood_key, mood_name in DEFAULT_MOODS.items():
+    for mood_key, mood_name in get_mood_map().items():
         mood_buttons.append(
             InlineKeyboardButton(mood_name, callback_data=f"browse_mood_{mood_key}")
         )
@@ -931,7 +951,7 @@ async def new_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = []
 
     for pl in playlists[:10]:
-        mood = DEFAULT_MOODS.get(pl.get('mood'), '🎵')
+        mood = get_mood_label(pl.get('mood'))
         name = escape_markdown(pl['name'])
         owner = escape_markdown(pl['owner_name'])
         created = format_date(pl.get('created_at', ''))
@@ -1006,7 +1026,7 @@ async def top_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mood_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE, mood_key: str):
     """Show playlists filtered by mood"""
     playlists = db.get_playlists_by_mood(mood_key, limit=20)
-    mood_name = DEFAULT_MOODS.get(mood_key, mood_key)
+    mood_name = get_mood_label(mood_key)
 
     if not playlists:
         await send_response(
@@ -1066,7 +1086,7 @@ async def show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE
     buttons = []
 
     for pl in playlists[:10]:
-        mood = DEFAULT_MOODS.get(pl.get('mood'), '🎵')
+        mood = get_mood_label(pl.get('mood'))
         name = escape_markdown(pl['name'])
         owner = escape_markdown(pl['owner_name'])
         likes = len(pl.get('likes', []))
@@ -2386,6 +2406,7 @@ def main():
             CallbackQueryHandler(admin_add_plan_start, pattern='^admin_add_plan$'),
             CallbackQueryHandler(admin_plan_price_start, pattern='^admin_plan_price_'),
             CallbackQueryHandler(admin_plan_duration_start, pattern='^admin_plan_duration_'),
+            CallbackQueryHandler(admin_add_mood_start, pattern='^admin_add_mood$'),
         ],
         states={
             GIVE_PREMIUM_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_give_premium_id)],
@@ -2395,8 +2416,13 @@ def main():
             ADD_PLAN_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_plan_duration)],
             EDIT_PLAN_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_plan_price_value)],
             EDIT_PLAN_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_plan_duration_value)],
+            ADD_MOOD_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_mood_save)],
         },
-        fallbacks=[CallbackQueryHandler(admin_premium, pattern='^admin_premium$')],
+        fallbacks=[
+            CallbackQueryHandler(admin_premium, pattern='^admin_premium$'),
+            CallbackQueryHandler(admin_settings_callback, pattern='^admin_settings$'),
+            CommandHandler('cancel', cancel),
+        ],
     )
     application.add_handler(admin_conv_handler)
 
@@ -2407,6 +2433,9 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_plan_delete_start, pattern='^admin_plan_delete_.+$'))
     application.add_handler(CallbackQueryHandler(admin_plan_delete_confirm, pattern='^admin_plan_delete_confirm_.+$'))
     application.add_handler(CallbackQueryHandler(admin_stats_callback, pattern='^admin_stats$'))
+    application.add_handler(CallbackQueryHandler(admin_settings_callback, pattern='^admin_settings$'))
+    application.add_handler(CallbackQueryHandler(admin_delete_mood_start, pattern='^admin_delete_mood_[a-z0-9_]+$'))
+    application.add_handler(CallbackQueryHandler(admin_delete_mood_confirm, pattern='^admin_delete_mood_confirm_[a-z0-9_]+$'))
 
     # Audio handler
     application.add_handler(MessageHandler(filters.AUDIO, handle_audio))
