@@ -893,7 +893,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not playlist['songs']:
             await query.answer("این پلی‌لیست خالیه!")
-            return
 
         # Send playlist info before songs
         mood_label = DEFAULT_MOODS.get(playlist.get('mood', 'happy'), playlist.get('mood', 'نامشخص'))
@@ -934,27 +933,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.MARKDOWN,
         )
 
-        # Increment plays
-        db.increment_plays(playlist_id)
+        if playlist['songs']:
+            # Increment plays
+            db.increment_plays(playlist_id)
 
-        # Send all songs
-        await query.answer(f"در حال پخش {playlist['name']}...")
+            # Send all songs
+            await query.answer(f"در حال پخش {playlist['name']}...")
 
-        for song_id in playlist['songs']:
-            song = db.data['songs'].get(song_id)
-            if song:
-                caption = get_song_info(song)
-                try:
-                    await context.bot.send_audio(
-                        chat_id=user_id,
-                        audio=song['file_id'],
-                        caption=caption,
-                        parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=create_song_buttons(song_id, playlist_id)
-                    )
-                    await asyncio.sleep(0.5)
-                except Exception as e:
-                    logger.error(f"Failed to send audio: {e}")
+            for song_id in playlist['songs']:
+                song = db.data['songs'].get(song_id)
+                if song:
+                    caption = get_song_info(song)
+                    try:
+                        await context.bot.send_audio(
+                            chat_id=user_id,
+                            audio=song['file_id'],
+                            caption=caption,
+                            parse_mode=ParseMode.MARKDOWN,
+                            reply_markup=create_song_buttons(song_id, playlist_id)
+                        )
+                        await asyncio.sleep(0.5)
+                    except Exception as e:
+                        logger.error(f"Failed to send audio: {e}")
 
     # User quick actions
     elif data == 'my_playlists':
