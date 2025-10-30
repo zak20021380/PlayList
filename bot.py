@@ -1165,41 +1165,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.answer(SHARE_LINK_SENT)
 
-    # Like playlist
-    elif data.startswith('like_'):
-        playlist_id = data.replace('like_', '')
-        playlist = db.get_playlist(playlist_id)
-
-        if not playlist:
-            await query.answer(ERROR_NOT_FOUND, show_alert=True)
-            return
-
-        if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
-            await query.answer(PLAYLIST_NOT_PUBLISHED, show_alert=True)
-            return
-
-        # Check if already liked
-        if str(user_id) in playlist.get('likes', []):
-            # Unlike
-            db.unlike_playlist(user_id, playlist_id)
-            await query.answer(UNLIKED)
-        else:
-            # Like
-            if db.like_playlist(user_id, playlist_id):
-                await query.answer(LIKED)
-
-                # Send notification to owner
-                owner_id = int(playlist['owner_id'])
-                if owner_id != user_id:
-                    user = db.get_user(user_id)
-                    notif_text = NOTIF_LIKED.format(
-                        user=user['first_name'],
-                        playlist=playlist['name']
-                    )
-                    await send_notification(owner_id, notif_text, context)
-            else:
-                await query.answer(ALREADY_LIKED)
-
+    # Like song (needs to be checked before general like handler)
     elif data.startswith('like_song:'):
         try:
             _, playlist_id, song_id = data.split(':', 2)
@@ -1267,40 +1233,40 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # Add to playlist
-    elif data.startswith('add_'):
-        playlist_id = data.replace('add_', '')
+    # Like playlist
+    elif data.startswith('like_'):
+        playlist_id = data.replace('like_', '')
         playlist = db.get_playlist(playlist_id)
 
         if not playlist:
-            await query.answer(ERROR_NOT_FOUND)
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
             return
 
         if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
-            await query.answer(PLAYLIST_NOT_PUBLISHED)
+            await query.answer(PLAYLIST_NOT_PUBLISHED, show_alert=True)
             return
 
-        context.user_data['adding_from'] = playlist_id
+        # Check if already liked
+        if str(user_id) in playlist.get('likes', []):
+            # Unlike
+            db.unlike_playlist(user_id, playlist_id)
+            await query.answer(UNLIKED)
+        else:
+            # Like
+            if db.like_playlist(user_id, playlist_id):
+                await query.answer(LIKED)
 
-        # Show user's playlists
-        user_playlists = db.get_user_playlists(user_id)
-        if not user_playlists:
-            await query.answer("اول یه پلی‌لیست بساز!")
-            return
-
-        buttons = []
-        for pl in user_playlists:
-            buttons.append([
-                InlineKeyboardButton(
-                    pl['name'],
-                    callback_data=f"addto_{pl['id']}"
-                )
-            ])
-
-        await query.edit_message_text(
-            CHOOSE_PLAYLIST_TO_ADD,
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
+                # Send notification to owner
+                owner_id = int(playlist['owner_id'])
+                if owner_id != user_id:
+                    user = db.get_user(user_id)
+                    notif_text = NOTIF_LIKED.format(
+                        user=user['first_name'],
+                        playlist=playlist['name']
+                    )
+                    await send_notification(owner_id, notif_text, context)
+            else:
+                await query.answer(ALREADY_LIKED)
 
     elif data.startswith('add_song:'):
         try:
@@ -1423,6 +1389,41 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Failed to update song buttons after add: {exc}")
 
         context.user_data.pop('pending_song_add', None)
+
+    # Add to playlist
+    elif data.startswith('add_'):
+        playlist_id = data.replace('add_', '')
+        playlist = db.get_playlist(playlist_id)
+
+        if not playlist:
+            await query.answer(ERROR_NOT_FOUND)
+            return
+
+        if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
+            await query.answer(PLAYLIST_NOT_PUBLISHED)
+            return
+
+        context.user_data['adding_from'] = playlist_id
+
+        # Show user's playlists
+        user_playlists = db.get_user_playlists(user_id)
+        if not user_playlists:
+            await query.answer("اول یه پلی‌لیست بساز!")
+            return
+
+        buttons = []
+        for pl in user_playlists:
+            buttons.append([
+                InlineKeyboardButton(
+                    pl['name'],
+                    callback_data=f"addto_{pl['id']}"
+                )
+            ])
+
+        await query.edit_message_text(
+            CHOOSE_PLAYLIST_TO_ADD,
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
 
     # Play playlist
     elif data.startswith('play_'):
