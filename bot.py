@@ -424,7 +424,7 @@ async def my_playlists(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buttons.append([
                 InlineKeyboardButton(
                     "🔗 اشتراک‌گذاری",
-                    url=share_url,
+                    callback_data=f"share_{pl['id']}",
                 )
             ])
 
@@ -982,6 +982,37 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🔙 بازگشت", callback_data="browse_menu")]
             ]),
         )
+
+    elif data.startswith('share_'):
+        playlist_id = data.replace('share_', '', 1)
+        playlist = db.get_playlist(playlist_id)
+
+        if not playlist:
+            await query.answer(ERROR_NOT_FOUND, show_alert=True)
+            return
+
+        if playlist.get('status') != 'published' and playlist.get('owner_id') != str(user_id):
+            await query.answer(PLAYLIST_NOT_PUBLISHED, show_alert=True)
+            return
+
+        share_url = build_playlist_share_url(playlist_id, playlist.get('name', ''))
+        if not share_url:
+            await query.answer(ERROR_GENERAL, show_alert=True)
+            return
+
+        share_text = SHARE_PLAYLIST_MESSAGE.format(
+            name=escape_markdown(playlist.get('name', 'پلی‌لیست')),
+            link=share_url,
+        )
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=share_text,
+            parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=True,
+        )
+
+        await query.answer(SHARE_LINK_SENT)
 
     # Like playlist
     elif data.startswith('like_'):
