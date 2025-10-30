@@ -206,6 +206,22 @@ UNLIKED = "لایک برداشته شد 💔"
 
 ADDED_TO_PLAYLIST = "به پلی‌لیست «{playlist}» اضافه شد! ✅"
 
+SONG_REMOVED_SUCCESS = "آهنگ از «{playlist}» حذف شد! 🗑️"
+SONG_REMOVE_NOT_OWNER = "فقط صاحب پلی‌لیست می‌تونه آهنگ‌ها رو حذف کنه. 😅"
+SONG_REMOVE_NOT_FOUND = "آهنگ پیدا نشد یا قبلاً حذف شده. 🔍"
+
+PLAYLIST_CAPACITY_STATUS = "ظرفیت پلی‌لیست: {current}/{maximum} آهنگ."
+PLAYLIST_OWNER_ADD_HINT = "برای اضافه کردن آهنگ جدید، دکمه زیر رو بزن و فایل صوتی رو بفرست. 🎶"
+PLAYLIST_OWNER_FULL_HINT = "ظرفیت پلی‌لیست تکمیل شده ({current}/{maximum}). برای اضافه کردن آهنگ جدید باید یکی رو حذف کنی."
+PLAYLIST_OWNER_NOW_DRAFT = (
+    "این پلی‌لیست دوباره پیش‌نویس شد چون کمتر از {min_songs} آهنگ داره."
+    "\nهر زمان آماده بودی با /publishplaylist منتشرش کن."
+)
+PLAYLIST_ACTIVATED_FOR_UPLOAD = (
+    "پلی‌لیست «{name}» فعال شد! حالا هر فایل صوتی که بفرستی به همین پلی‌لیست اضافه میشه. 🎵"
+)
+PLAYLIST_ALREADY_ACTIVE = "این پلی‌لیست همین الان هم برای آپلود فعاله. 🎧"
+
 CHOOSE_PLAYLIST_TO_ADD = "به کدوم پلی‌لیستت اضافه کنم؟ 🤔"
 
 CHOOSE_PLAYLIST_TO_SAVE_SONG = "کدوم پلی‌لیستت رو برای ذخیره آهنگ انتخاب می‌کنی؟ 🎯"
